@@ -183,14 +183,16 @@
     # param set SIM_OPOS_HDG 0
 
 import json
+from pathlib import Path
+import platform
 
 # -----------------------------
 # Coordinates
 # -----------------------------
 
-HOME_LAT = 40.193254 # AUA lat
-HOME_LON = 44.504462 # AUA lon
-HOME_ALT_AMSL = 1100
+HOME_LAT = 40.192 # AUA lat
+HOME_LON = 44.50446 # AUA lon
+HOME_ALT_AMSL = 1200
 
 # SHORT MISSION
 WP2_LAT = 40.194682
@@ -238,7 +240,7 @@ plan = {
             {
                 "AMSLAltAboveTerrain": None, # Altitude value shown to the user.
                 "Altitude": MISSION_ALT,
-                # "AltitudeMode": 1, # already set with globalPlanAltitudeMode
+                "AltitudeMode": 1, # already set with globalPlanAltitudeMode
                 "autoContinue": True, # Tells the autopilot to automatically move to the next mission item after this one completes
                 "command": 22, # MAV_CMD_NAV_TAKEOFF
                 "doJumpId": 1, 
@@ -257,7 +259,7 @@ plan = {
             {
                 "AMSLAltAboveTerrain": None, # Altitude value shown to the user
                 "Altitude": MISSION_ALT,
-                # "AltitudeMode": 1, # already set with globalPlanAltitudeMode
+                "AltitudeMode": 1, # already set with globalPlanAltitudeMode
                 "autoContinue": True,
                 "command": 16,
                 "doJumpId": 2,
@@ -276,7 +278,7 @@ plan = {
             {
                 "AMSLAltAboveTerrain": None,
                 "Altitude": MISSION_ALT,
-                # "AltitudeMode": 1, # already set with globalPlanAltitudeMode
+                "AltitudeMode": 1, # already set with globalPlanAltitudeMode
                 "autoContinue": True,
                 "command": 16,
                 "doJumpId": 3,
@@ -295,7 +297,7 @@ plan = {
             {
                 "AMSLAltAboveTerrain": None,
                 "Altitude": 0,
-                # "AltitudeMode": 1, # already set with globalPlanAltitudeMode
+                "AltitudeMode": 1, # already set with globalPlanAltitudeMode
                 "autoContinue": True,
                 "command": 20,
                 "doJumpId": 4,
@@ -329,7 +331,15 @@ plan = {
     "version": 1
 }
 
-with open("/Users/amkrtumyan/Documents/QGroundControl/Missions/AUA_mission.plan", "w") as f:
+if "microsoft" in platform.uname().release.lower():   # WSL
+    docs = Path("/mnt/c/Users/user1811/Documents")
+else:                                                 # native Windows/macOS/Linux
+    docs = Path.home() / "Documents"
+
+output_path = docs / "QGroundControl" / "Missions" / "AUA_mission.plan"
+output_path.parent.mkdir(parents=True, exist_ok=True)
+
+with output_path.open("w", encoding="utf-8") as f:
     json.dump(plan, f, indent=4)
 
-print("Created /Users/amkrtumyan/Documents/QGroundControl/Missions/AUA_mission.plan")
+print(f"Created {output_path}")
