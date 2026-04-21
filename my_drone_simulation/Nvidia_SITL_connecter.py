@@ -15,6 +15,30 @@ from isaacsim.core.experimental.prims import RigidPrim
 from isaacsim.sensors.physics import _sensor
 
 # =========================================================
+# PERSISTENT STATE ACROSS RE-RUNS IN ISAAC SCRIPT EDITOR
+# =========================================================
+try:
+    _ARDUPILOT_BRIDGE_RUNNING
+except NameError:
+    _ARDUPILOT_BRIDGE_RUNNING = False
+
+try:
+    _ARDUPILOT_BRIDGE_SOCKET
+except NameError:
+    _ARDUPILOT_BRIDGE_SOCKET = None
+
+try:
+    _ARDUPILOT_BRIDGE_SIM
+except NameError:
+    _ARDUPILOT_BRIDGE_SIM = None
+
+try:
+    _ARDUPILOT_BRIDGE_TASK
+except NameError:
+    _ARDUPILOT_BRIDGE_TASK = None
+
+
+# =========================================================
 # PATHS
 # =========================================================
 ROBOT_PATH = "/World/hawks_work_f450_jetsonnano_steereocam"
@@ -27,24 +51,30 @@ MOTOR_LINK_PATHS = [
     f"{ROBOT_PATH}/rear_left_motor_link",
     f"{ROBOT_PATH}/rear_right_motor_link",
 ]
-print("RUNNING NEW BRIDGE v2 - local_frame=True, THRUST_SCALE=0.20")
+
 # =========================================================
-# BRING-UP SETTINGS
+# TIMING / STARTUP
 # =========================================================
+DESIRED_PHYSICS_DT = 0.001          # 1000 Hz
 MIN_ACCEPTABLE_PHYSICS_HZ = 950.0
 
 REQUIRED_SETTLE_SECONDS = 2.0
-MAX_SETTLE_SPEED = 0.10   # m/s
-MAX_SETTLE_GYRO = 0.10    # rad/s
+MAX_SETTLE_SPEED = 0.10             # m/s
+MAX_SETTLE_GYRO = 0.10              # rad/s
 
-# Start with +96.0. If heading gets worse instead of better,
-# change this to -96.0 and retest.
+# =========================================================
+# ORIENTATION / FRAMES
+# =========================================================
+# Adjust only if heading gets worse instead of better.
 YAW_OFFSET_DEG = 96.0
+
+# Isaac local body frame (FLU) -> ArduPilot body frame (FRD)
+T_FLU_TO_FRD = np.diag([1.0, -1.0, -1.0])
 
 # =========================================================
 # THRUST TUNING (CONSERVATIVE DEBUG VALUES)
 # =========================================================
-HOVER_THRUST = np.array([4.0, 4.0, 4.0, 4.0], dtype=np.float32)
+HOVER_THRUST = np.array([6.2, 6.2, 5, 5], dtype=np.float32)
 
 PWM_IDLE = 1000.0
 PWM_HOVER = 1500.0
@@ -53,10 +83,9 @@ THRUST_SCALE = 0.20
 # Assumes each motor link's local +Z is the thrust axis
 MOTOR_THRUST_DIR_LOCAL = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 
-# Isaac local body frame (FLU) -> ArduPilot body frame (FRD)
-T_FLU_TO_FRD = np.diag([1.0, -1.0, -1.0])
-
-sim = None
+# =========================================================
+# GLOBALS
+# =========================================================
 t0 = time.perf_counter()
 
 
@@ -67,6 +96,10 @@ def prim_exists(path: str) -> bool:
 
 
 def decode_sitl_packet(data: bytes):
+    """
+    Decode ArduPilot JSON backend actuator packet.
+    Supports both 16-channel and 32-channel variants.
+    """
     if len(data) < 8:
         return None
 
@@ -97,12 +130,21 @@ def decode_sitl_packet(data: bytes):
     }
 
 
-def pwm_to_hover_norm(pwm_us: np.ndarray):
+def pwm_to_hover_norm(pwm_us: np.ndarray) -> np.ndarray:
+    """
+    Convert PWM into a simple normalized thrust command around hover.
+    1000 -> 0.0
+    1500 -> 1.0
+    clipped to avoid absurd thrust during early bring-up
+    """
     x = (pwm_us - PWM_IDLE) / (PWM_HOVER - PWM_IDLE)
     return np.clip(x, 0.0, 2.2)
 
 
 def quat_wxyz_to_rot(q):
+    """
+    Quaternion [w, x, y, z] -> rotation matrix
+    """
     w, x, y, z = q
     return np.array([
         [1 - 2*(y*y + z*z),     2*(x*y - z*w),     2*(x*z + y*w)],
@@ -112,6 +154,9 @@ def quat_wxyz_to_rot(q):
 
 
 def rot_to_rpy_zyx(R):
+    """
+    Rotation matrix -> roll, pitch, yaw
+    """
     pitch = -math.asin(np.clip(R[2, 0], -1.0, 1.0))
     roll = math.atan2(R[2, 1], R[2, 2])
     yaw = math.atan2(R[1, 0], R[0, 0])
@@ -137,15 +182,59 @@ def safe_remove_callback(sim_ctx, name: str):
         print(f"No old physics callback to remove: {name}")
 
 
-async def setup_bridge():
-    global sim
+def close_udp_socket():
+    global _ARDUPILOT_BRIDGE_SOCKET
 
+    if _ARDUPILOT_BRIDGE_SOCKET is not None:
+        try:
+            _ARDUPILOT_BRIDGE_SOCKET.close()
+            print("Closed old UDP socket.")
+        except Exception as e:
+            print("Warning closing old UDP socket:", repr(e))
+        finally:
+            _ARDUPILOT_BRIDGE_SOCKET = None
+
+
+def stop_bridge():
+    """
+    Safe manual stop. You can run stop_bridge() in Isaac later if needed.
+    """
+    global _ARDUPILOT_BRIDGE_RUNNING
+    global _ARDUPILOT_BRIDGE_TASK
+    global _ARDUPILOT_BRIDGE_SIM
+
+    print("Stopping bridge...")
+
+    try:
+        if _ARDUPILOT_BRIDGE_SIM is not None:
+            safe_remove_callback(_ARDUPILOT_BRIDGE_SIM, "ardupilot_bridge")
+    except Exception as e:
+        print("Warning removing callback during stop:", repr(e))
+
+    close_udp_socket()
+
+    try:
+        if _ARDUPILOT_BRIDGE_TASK is not None and not _ARDUPILOT_BRIDGE_TASK.done():
+            _ARDUPILOT_BRIDGE_TASK.cancel()
+            print("Cancelled bridge task.")
+    except Exception as e:
+        print("Warning cancelling bridge task:", repr(e))
+
+    _ARDUPILOT_BRIDGE_TASK = None
+    _ARDUPILOT_BRIDGE_RUNNING = False
+    print("Bridge stopped.")
+
+
+async def setup_bridge():
+    global _ARDUPILOT_BRIDGE_SOCKET
+    global _ARDUPILOT_BRIDGE_SIM
+
+    print("RUNNING NEW BRIDGE v2 - local_frame=True, THRUST_SCALE=0.20")
     print("=== ArduPilot <-> Isaac Bridge Setup ===")
 
     timeline = omni.timeline.get_timeline_interface()
     if not timeline.is_playing():
-        print("ERROR: Press Play first, then run this script.")
-        return
+        raise RuntimeError("Press Play first, then run this script.")
 
     print("ROBOT_PATH:", ROBOT_PATH)
     print("BASE_LINK_PATH:", BASE_LINK_PATH)
@@ -157,10 +246,7 @@ async def setup_bridge():
     paths_to_check = [BASE_LINK_PATH, IMU_SENSOR_PATH] + MOTOR_LINK_PATHS
     missing = [p for p in paths_to_check if not prim_exists(p)]
     if missing:
-        print("ERROR: Missing prim paths:")
-        for p in missing:
-            print(" ", p)
-        return
+        raise RuntimeError("Missing prim paths:\n" + "\n".join(missing))
 
     sim = SimulationContext.instance()
     if sim is None:
@@ -168,25 +254,40 @@ async def setup_bridge():
         sim = SimulationContext()
         await sim.initialize_simulation_context_async()
 
+    _ARDUPILOT_BRIDGE_SIM = sim
+
     app = omni.kit.app.get_app()
+
+    # Force physics dt
+    try:
+        sim.set_physics_dt(DESIRED_PHYSICS_DT)
+    except Exception as e:
+        print("Warning: set_physics_dt failed:", repr(e))
+
     await app.next_update_async()
     await app.next_update_async()
 
     safe_remove_callback(sim, "ardupilot_bridge")
+    close_udp_socket()
 
     try:
         current_dt = sim.get_physics_dt()
         current_hz = 1.0 / current_dt if current_dt and current_dt > 0 else 0.0
         print(f"Current physics dt={current_dt:.6f}s ({current_hz:.1f} Hz)")
-        if current_hz < MIN_ACCEPTABLE_PHYSICS_HZ:
-            print("WARNING: Physics rate is below recommended value.")
     except Exception as e:
-        print("WARNING: Could not read physics dt:", repr(e))
+        raise RuntimeError(f"Could not read physics dt: {repr(e)}")
+
+    if current_hz < MIN_ACCEPTABLE_PHYSICS_HZ:
+        raise RuntimeError(
+            f"Physics rate is too low: {current_hz:.1f} Hz. "
+            f"Expected ~1000 Hz. Refusing to run bridge."
+        )
 
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     udp_sock.bind(("0.0.0.0", 9002))
     udp_sock.setblocking(False)
+    _ARDUPILOT_BRIDGE_SOCKET = udp_sock
 
     base = RigidPrim(BASE_LINK_PATH)
     motor_bodies = [RigidPrim(p) for p in MOTOR_LINK_PATHS]
@@ -198,8 +299,7 @@ async def setup_bridge():
         positions, orientations = base.get_world_poses()
         home_pos_world = np.array(positions[0], dtype=np.float64)
     except Exception as e:
-        print("ERROR: Failed reading base pose:", repr(e))
-        return
+        raise RuntimeError(f"Failed reading base pose: {repr(e)}")
 
     home_locked = False
     settle_start = None
@@ -280,6 +380,7 @@ async def setup_bridge():
                 if not imu_warned_invalid:
                     print("WARNING: IMU reading invalid. Check IMU_SENSOR_PATH.")
                     imu_warned_invalid = True
+
                 gyro_body = np.zeros(3, dtype=np.float64)
                 accel_body = np.zeros(3, dtype=np.float64)
 
@@ -294,6 +395,23 @@ async def setup_bridge():
 
             roll, pitch, yaw = rot_to_rpy_zyx(R_ned_body_frd)
             heading_deg = (math.degrees(yaw) + 360.0) % 360.0
+
+            rel_world = pos_world - home_pos_world
+
+            pos_ned0 = np.array([
+                rel_world[0],
+                -rel_world[1],
+                -rel_world[2],
+            ], dtype=np.float64)
+
+            vel_ned0 = np.array([
+                vel_world[0],
+                -vel_world[1],
+                -vel_world[2],
+            ], dtype=np.float64)
+
+            pos_ned = R_YAW @ pos_ned0
+            vel_ned = R_YAW @ vel_ned0
 
         except Exception as e:
             print("State/read error:", repr(e))
@@ -315,11 +433,12 @@ async def setup_bridge():
                 settle_start = None
 
         # -------------------------------------------------
-        # 4) Convert PWM -> thrust
+        # 4) Convert PWM -> thrust and apply in LOCAL frame
         # -------------------------------------------------
         thrust_norm = pwm_to_hover_norm(last_pwm)
         per_motor_thrust = THRUST_SCALE * HOVER_THRUST * thrust_norm
 
+        # Do not apply thrust before home lock
         if not home_locked:
             per_motor_thrust[:] = 0.0
 
@@ -350,8 +469,25 @@ async def setup_bridge():
                 f"accel={np.round(accel_body, 3).tolist()} | "
                 f"speed={speed:.3f}"
             )
-            last_debug_print = now
 
+            print(
+                f"send pos_ned={np.round(pos_ned, 3).tolist()} | "
+                f"vel_ned={np.round(vel_ned, 3).tolist()} | "
+                f"attitude={[round(roll, 3), round(pitch, 3), round(yaw, 3)]}"
+            )
+
+            last_debug_print = now
+        if np.any(last_pwm > 1000.0):
+            print(
+                f"ARMED PWM DEBUG | PWM={last_pwm.tolist()} | "
+                f"thrust_norm={np.round(thrust_norm, 3).tolist()} | "
+                f"per_motor_thrust={np.round(per_motor_thrust, 4).tolist()}"
+            )
+        print(
+            f"send pos_ned={np.round(pos_ned, 3).tolist()} | "
+            f"vel_ned={np.round(vel_ned, 3).tolist()} | "
+            f"attitude={[round(roll, 3), round(pitch, 3), round(yaw, 3)]}"
+        )
         # -------------------------------------------------
         # 6) Do not send JSON until home is locked
         # -------------------------------------------------
@@ -359,26 +495,9 @@ async def setup_bridge():
             return
 
         # -------------------------------------------------
-        # 7) Build NED/FRD navigation packet
+        # 7) Build and send JSON state packet
         # -------------------------------------------------
         try:
-            rel_world = pos_world - home_pos_world
-
-            pos_ned0 = np.array([
-                rel_world[0],
-                -rel_world[1],
-                -rel_world[2],
-            ], dtype=np.float64)
-
-            vel_ned0 = np.array([
-                vel_world[0],
-                -vel_world[1],
-                -vel_world[2],
-            ], dtype=np.float64)
-
-            pos_ned = R_YAW @ pos_ned0
-            vel_ned = R_YAW @ vel_ned0
-
             reply = {
                 "timestamp": time.perf_counter() - t0,
                 "imu": {
@@ -400,6 +519,43 @@ async def setup_bridge():
 
     sim.add_physics_callback("ardupilot_bridge", physics_step)
     print("Physics callback installed.")
+    print("Bridge is running.")
 
 
-asyncio.ensure_future(setup_bridge())
+async def start_bridge():
+    global _ARDUPILOT_BRIDGE_RUNNING
+
+    if _ARDUPILOT_BRIDGE_RUNNING:
+        print("Bridge already running. Call stop_bridge() first if you want to restart it.")
+        return
+
+    _ARDUPILOT_BRIDGE_RUNNING = True
+
+    try:
+        await setup_bridge()
+    except Exception as e:
+        print("Bridge failed to start:", repr(e))
+        stop_bridge()
+
+
+def run_bridge():
+    """
+    Start exactly one bridge task.
+    In Isaac Script Editor, pressing Run on this file once should start the bridge.
+    """
+    global _ARDUPILOT_BRIDGE_TASK
+
+    if _ARDUPILOT_BRIDGE_TASK is not None and not _ARDUPILOT_BRIDGE_TASK.done():
+        print("Bridge task already exists.")
+        return
+
+    _ARDUPILOT_BRIDGE_TASK = asyncio.ensure_future(start_bridge())
+
+
+# =========================================================
+# START HERE
+# =========================================================
+# Press Run once in Isaac Script Editor.
+# To stop later, run:
+#     stop_bridge()
+run_bridge()

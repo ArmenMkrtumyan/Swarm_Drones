@@ -1,24 +1,30 @@
 from pymavlink import mavutil
 import time
-import math
 
 MASTER = "udpin:localhost:14551"
 
-# Mission from mission_creator.py
+# Mission geometry
 HOME_LAT = 40.192
 HOME_LON = 44.50446
-HOME_ALT_AMSL = 1200.0
 
 WP2_LAT = 40.194682
 WP2_LON = 44.504019
 WP3_LAT = 40.193507
 WP3_LON = 44.503119
 
-MISSION_ALT = 50.0  # relative altitude
+# Keep the first autonomous test small
+MISSION_ALT = 3.0  # relative altitude, meters
 
-# Optional debug/bring-up tweaks
-SET_ARMING_MAGTHRESH_ZERO = True
-FORCE_ARM_FALLBACK = False   # keep False unless you really need bench-force-arming
+# Debug / safety behavior
+SET_ARMING_MAGTHRESH_ZERO = False
+FORCE_ARM_FALLBACK = False
+
+# Timing
+INITIAL_DRAIN_SECONDS = 5.0
+PRE_ARM_STABILIZE_SECONDS = 10.0
+POST_ARM_STABILIZE_SECONDS = 3.0
+POST_AUTO_SWITCH_SECONDS = 3.0
+MISSION_MONITOR_SECONDS = 30.0
 
 MISSION_ACK_TYPES = {
     0: "ACCEPTED",
@@ -68,6 +74,41 @@ def wait_heartbeat(master):
     print(f"Heartbeat from system={master.target_system} component={master.target_component}")
 
 
+def normalize_param_id(param_id):
+    if isinstance(param_id, bytes):
+        return param_id.decode("utf-8", errors="ignore").rstrip("\x00")
+    if isinstance(param_id, str):
+        return param_id.rstrip("\x00")
+    return str(param_id).rstrip("\x00")
+
+
+def request_streams(master):
+    try:
+        master.mav.request_data_stream_send(
+            master.target_system,
+            master.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_POSITION,
+            10,
+            1
+        )
+        master.mav.request_data_stream_send(
+            master.target_system,
+            master.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS,
+            5,
+            1
+        )
+        master.mav.request_data_stream_send(
+            master.target_system,
+            master.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
+            10,
+            1
+        )
+    except Exception as e:
+        print("Stream request warning:", repr(e))
+
+
 def drain_messages(master, duration=3.0):
     print(f"Reading messages for {duration:.1f}s...")
     end = time.time() + duration
@@ -77,26 +118,39 @@ def drain_messages(master, duration=3.0):
             continue
 
         mtype = msg.get_type()
+
         if mtype == "STATUSTEXT":
             print(f"STATUSTEXT: {msg.text}")
+
         elif mtype == "COMMAND_ACK":
             print(f"COMMAND_ACK: command={msg.command} result={command_ack_name(msg.result)} raw={msg}")
+
         elif mtype == "MISSION_ACK":
             print(f"MISSION_ACK: type={mission_ack_name(msg.type)} raw={msg}")
+
         elif mtype == "MISSION_CURRENT":
             print(f"MISSION_CURRENT: seq={msg.seq}")
+
         elif mtype == "MISSION_ITEM_REACHED":
             print(f"MISSION_ITEM_REACHED: seq={msg.seq}")
+
         elif mtype == "HEARTBEAT":
             armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
             print(f"HEARTBEAT: armed={armed} mode={msg.custom_mode}")
+
         elif mtype == "GLOBAL_POSITION_INT":
             print(
                 f"GLOBAL_POSITION_INT: lat={msg.lat/1e7:.7f} lon={msg.lon/1e7:.7f} "
                 f"rel_alt={msg.relative_alt/1000.0:.2f}m vz={msg.vz/100.0:.2f}m/s"
             )
+
         elif mtype == "LOCAL_POSITION_NED":
             print(f"LOCAL_POSITION_NED: x={msg.x:.2f} y={msg.y:.2f} z={msg.z:.2f} vz={msg.vz:.2f}")
+
+        elif mtype == "GPS_RAW_INT":
+            fix_type = int(getattr(msg, "fix_type", 0))
+            sats = int(getattr(msg, "satellites_visible", 0))
+            print(f"GPS_RAW_INT: fix_type={fix_type} sats={sats}")
 
 
 def wait_command_ack(master, command, timeout=5.0):
@@ -117,7 +171,7 @@ def wait_mission_ack(master, timeout=10.0):
     return None
 
 
-def set_param(master, name, value):
+def set_param(master, name, value, timeout=5.0):
     print(f"Setting param {name} = {value}")
     master.mav.param_set_send(
         master.target_system,
@@ -126,13 +180,26 @@ def set_param(master, name, value):
         float(value),
         mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
     )
-    time.sleep(1.0)
+
+    end = time.time() + timeout
+    while time.time() < end:
+        msg = master.recv_match(type="PARAM_VALUE", blocking=True, timeout=0.5)
+        if not msg:
+            continue
+
+        param_id = normalize_param_id(msg.param_id)
+        if param_id == name:
+            print(f"Confirmed {name} = {msg.param_value}")
+            return True
+
+    print(f"WARNING: did not receive PARAM_VALUE confirmation for {name}")
+    return False
 
 
 def set_mode(master, mode_name):
     mode_map = master.mode_mapping()
-    if mode_name not in mode_map:
-        raise RuntimeError(f"Mode {mode_name} not available. Modes: {list(mode_map.keys())}")
+    if mode_map is None or mode_name not in mode_map:
+        raise RuntimeError(f"Mode {mode_name} not available. Modes: {list(mode_map.keys()) if mode_map else 'None'}")
 
     mode_id = mode_map[mode_name]
     master.mav.set_mode_send(
@@ -141,7 +208,7 @@ def set_mode(master, mode_name):
         mode_id,
     )
     print(f"Requested mode: {mode_name}")
-    time.sleep(1.0)
+    time.sleep(1.5)
 
 
 def arm(master, force=False):
@@ -152,8 +219,8 @@ def arm(master, force=False):
         master.target_component,
         mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
         0,
-        1,          # arm
-        param2,     # 21196 = force arm
+        1,
+        param2,
         0, 0, 0, 0, 0
     )
     ack = wait_command_ack(master, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout=5.0)
@@ -191,7 +258,6 @@ def send_mission_clear_all(master):
             master.target_component,
         )
     print("Sent MISSION_CLEAR_ALL")
-    time.sleep(1.0)
 
 
 def send_mission_count(master, count):
@@ -253,7 +319,7 @@ def build_mission():
     GLOBAL_REL = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
     MISSION_FRAME = mavutil.mavlink.MAV_FRAME_MISSION
 
-    items = [
+    return [
         {
             "seq": 0,
             "frame": GLOBAL_REL,
@@ -274,7 +340,7 @@ def build_mission():
             "command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
             "current": 0,
             "autocontinue": 1,
-            "param1": 5.0,   # hold
+            "param1": 3.0,
             "param2": 0.0,
             "param3": 0.0,
             "param4": 0.0,
@@ -288,7 +354,7 @@ def build_mission():
             "command": mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
             "current": 0,
             "autocontinue": 1,
-            "param1": 5.0,   # hold
+            "param1": 3.0,
             "param2": 0.0,
             "param3": 0.0,
             "param4": 0.0,
@@ -311,17 +377,14 @@ def build_mission():
             "z": 0.0,
         },
     ]
-    return items
 
 
 def upload_mission(master, items):
-    # clear existing mission and wait for THAT ack
     send_mission_clear_all(master)
     ack = wait_mission_ack(master, timeout=5.0)
     if ack is None or int(ack.type) != mavutil.mavlink.MAV_MISSION_ACCEPTED:
         raise RuntimeError(f"MISSION_CLEAR_ALL failed: {ack}")
 
-    # now start upload
     send_mission_count(master, len(items))
 
     sent = set()
@@ -335,6 +398,7 @@ def upload_mission(master, items):
             raise RuntimeError("Timed out waiting for mission protocol response")
 
         mtype = msg.get_type()
+
         if mtype in ("MISSION_REQUEST_INT", "MISSION_REQUEST"):
             seq = int(msg.seq)
             if seq < 0 or seq >= len(items):
@@ -345,12 +409,12 @@ def upload_mission(master, items):
 
         elif mtype == "MISSION_ACK":
             if len(sent) != len(items):
-                raise RuntimeError(
-                    f"Got MISSION_ACK before all items were requested. sent={sorted(sent)}"
-                )
+                raise RuntimeError(f"Got MISSION_ACK before all items were requested. sent={sorted(sent)}")
             if int(msg.type) != mavutil.mavlink.MAV_MISSION_ACCEPTED:
                 raise RuntimeError(f"Mission upload failed: {msg}")
+            print("Mission upload complete.")
             break
+
 
 def set_current_mission_item(master, seq=0):
     master.mav.mission_set_current_send(
@@ -383,7 +447,8 @@ def main():
     master = mavutil.mavlink_connection(MASTER)
 
     wait_heartbeat(master)
-    drain_messages(master, duration=2.0)
+    request_streams(master)
+    drain_messages(master, duration=INITIAL_DRAIN_SECONDS)
 
     if SET_ARMING_MAGTHRESH_ZERO:
         set_param(master, "ARMING_MAGTHRESH", 0)
@@ -394,15 +459,13 @@ def main():
         print(item)
 
     upload_mission(master, items)
-    drain_messages(master, duration=2.0)
+    drain_messages(master, duration=3.0)
 
-    set_current_mission_item(master, seq=0)
-
-    set_mode(master, "AUTO")
-    drain_messages(master, duration=2.0)
+    set_mode(master, "STABILIZE")
+    drain_messages(master, duration=PRE_ARM_STABILIZE_SECONDS)
 
     arm(master, force=False)
-    drain_messages(master, duration=4.0)
+    drain_messages(master, duration=5.0)
 
     armed = wait_armed(master, timeout=5.0)
     print("Armed after normal arm?", armed)
@@ -418,10 +481,21 @@ def main():
         print("Vehicle is not armed. Stop here and inspect STATUSTEXT / EKF / GPS health.")
         return
 
-    start_mission(master)
-    drain_messages(master, duration=20.0)
+    print("Vehicle armed. Holding briefly before AUTO...")
+    drain_messages(master, duration=POST_ARM_STABILIZE_SECONDS)
 
-    print("Mission script finished monitoring. Vehicle should now be in AUTO mission.")
+    # Re-assert mission start point immediately before AUTO
+    set_current_mission_item(master, seq=0)
+    drain_messages(master, duration=2.0)
+
+    set_mode(master, "AUTO")
+    drain_messages(master, duration=2.0)
+
+    start_mission(master)
+    drain_messages(master, duration=MISSION_MONITOR_SECONDS)
+
+    print("Mission script finished monitoring.")
+
 
 if __name__ == "__main__":
     main()

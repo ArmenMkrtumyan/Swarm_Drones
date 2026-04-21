@@ -1,3 +1,29 @@
+# Send Json From NVidia to QGroundControl and see what is happening
+
+# NVIDIA
+
+# 1. GPS
+# 2. Velocity (acceleration)
+# 3. Gyro + accelerometer
+# 4. Radio
+
+# SITL
+
+# Motors (actuators)
+
+# PID (proportional integral differential)
+# Input - Gyro 
+# Output - Actuator response (motor throttles)
+# Threshold needs to be given (So that it wont stick to for example 44.7 instead of 45)
+# We need to have some coefficient k_p * error(t) + integral(e(t)dt)*k_i 
+# For the error(t) function, integral will always increase, so we can use it as SOME_NUMBER
+
+# Lets introduce new function that will gradually get slower as time goes 
+# We can use the differential of the function (As error decreases, differential will decrease too)
+#  k_p * error(t) + integral(e(t)dt)*k_i + k_d  * d(error)/dt
+
+# Find libraries for which our drones movement will move correctly as we give motor signals 
+
 from pymavlink import mavutil
 import time
 
