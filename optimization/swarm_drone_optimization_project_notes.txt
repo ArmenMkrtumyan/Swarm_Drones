@@ -1,0 +1,114 @@
+Swarm Drone Optimization Project Notes
+
+Project Overview
+Our optimization group project focuses on swarm drone area coverage. The goal is to make multiple drones cover a given region as effectively as possible while minimizing energy consumption. The final implementation and simulation will be done in NVIDIA Isaac Sim.
+
+The main optimization objective is not only to maximize coverage, but also to reduce unnecessary movement, avoid overlap between drones, and keep the swarm behavior realistic enough for simulation.
+
+Where We Started
+At the beginning, we defined the general project idea as energy-efficient swarm drone coverage. The problem can be described as:
+
+- A target region must be covered by multiple drones.
+- The drones should maximize total area coverage.
+- The drones should avoid covering the same area repeatedly.
+- The drones should minimize total energy usage.
+- The drones should avoid collisions with each other and with obstacles.
+- The final behavior should be testable in NVIDIA Isaac Sim.
+
+We also identified that the project has both an optimization part and a simulation part. The optimization part decides how the drones should move or divide the area, while the simulation part demonstrates and evaluates the behavior in Isaac Sim.
+
+Research Phase
+After defining the problem, we started researching possible algorithmic approaches. Instead of choosing one method immediately, we decided to first compare several families of methods and evaluate which ones are realistic for our project timeline and compatible with Isaac Sim.
+
+The main families of methods we discussed were:
+
+1. Classical coverage and geometry-based methods
+   - Coverage path planning
+   - Grid-based decomposition
+   - Boustrophedon/lawnmower coverage
+   - Voronoi-based partitioning
+   - Task allocation between drones
+
+2. Metaheuristic optimization methods
+   - Particle Swarm Optimization
+   - Genetic Algorithms
+   - Ant Colony Optimization
+   - Simulated Annealing
+   - Other swarm-inspired methods such as Grey Wolf, Firefly, or Bee algorithms
+
+3. Learning and control-based methods
+   - Potential Fields
+   - Consensus-Based Coordination
+   - Multi-Agent Reinforcement Learning
+   - Model Predictive Control
+   - Energy-aware reward or cost functions
+
+Team Division
+Since there are three members in the group, we divided the research by method families.
+
+Teammate 1 will research classical coverage and geometry-based methods. Their focus is to find a simple and reliable baseline for area coverage, especially methods that are easy to implement and visualize in Isaac Sim.
+
+Teammate 2 will research metaheuristic optimization methods. Their focus is to understand whether methods like PSO, Genetic Algorithms, Ant Colony Optimization, or Simulated Annealing can improve coverage and energy efficiency compared to a simple baseline.
+
+I will research the third topic: learning and control-based methods. My focus is on methods that can guide swarm behavior more dynamically, especially Potential Fields, Consensus-Based Coordination, and Multi-Agent Reinforcement Learning.
+
+My Research Focus
+For the learning/control-based part, we compared several possible methods using criteria such as coverage quality, energy efficiency, collision and overlap handling, scalability, Isaac Sim compatibility, implementation difficulty, and project risk.
+
+The main methods I will focus on are:
+
+1. Potential Fields
+This is likely the simplest method among the three. The idea is that drones are attracted toward uncovered areas and repelled from obstacles, boundaries, or other drones. This method is practical because it is relatively easy to implement, easy to visualize, and suitable as a first swarm-movement baseline.
+
+2. Consensus-Based Coordination
+This method adds more swarm-level coordination. Drones use shared rules or communication to agree on spacing, direction, formation, or task distribution. It is more advanced than Potential Fields but still more manageable than full reinforcement learning.
+
+3. Multi-Agent Reinforcement Learning
+This is the most advanced option. Drones learn behavior through rewards based on coverage, energy use, collision avoidance, and overlap penalties. This method is powerful, but it is also the riskiest because it requires training, reward tuning, debugging, and more computation.
+
+Energy-Aware Objective
+All three methods should be evaluated using the same energy-aware objective. For reinforcement learning, this can be called a reward function. For Potential Fields and Consensus-Based Coordination, it is better to call it a cost function or evaluation objective.
+
+The energy-aware objective should include:
+
+- Coverage percentage
+- Total distance traveled
+- Estimated energy consumption
+- Overlap between drones
+- Collision avoidance
+- Smoothness of movement
+- Time needed to complete coverage
+- Scalability when increasing the number of drones
+
+Current Plan
+The plan is to test the three learning/control-based methods in increasing order of complexity:
+
+1. Potential Fields
+Start with this as the simplest baseline. It should allow us to quickly create swarm behavior where drones move toward uncovered regions while avoiding each other and obstacles.
+
+2. Consensus-Based Coordination
+After the baseline works, extend the swarm behavior by adding coordination rules. This can help drones distribute themselves better across the region and reduce repeated coverage.
+
+3. Multi-Agent Reinforcement Learning
+Finally, explore MARL as the most advanced method. This should only be attempted after simpler methods are working, because it has higher implementation and training risk.
+
+Why This Order Makes Sense
+This order is realistic because it moves from simple to complex. Potential Fields can provide a working baseline quickly. Consensus-Based Coordination improves the swarm behavior without requiring full learning. Multi-Agent Reinforcement Learning can then be explored as an advanced extension if time allows.
+
+This approach also reduces project risk. Even if MARL becomes too difficult to fully complete, the project can still have a working Isaac Sim demonstration using Potential Fields or Consensus-Based Coordination.
+
+Next Steps
+For next week, the group should continue the research phase and compare the three method families.
+
+Teammate 1 should summarize the strongest classical coverage and geometry-based methods and recommend a baseline coverage strategy.
+
+Teammate 2 should summarize the most suitable metaheuristic optimization methods and explain whether PSO, Genetic Algorithms, or another method is most practical for our case.
+
+I should focus on the learning/control-based methods and prepare a comparison of Potential Fields, Consensus-Based Coordination, and Multi-Agent Reinforcement Learning. I should also define how the energy-aware cost/reward function will be written and how these methods can be evaluated in Isaac Sim.
+
+The group should then combine the research results and decide on the final implementation path. A realistic final approach may be to start with a simple coverage baseline, add energy-aware optimization, and then simulate the selected swarm behavior in NVIDIA Isaac Sim.
+
+Summary
+We started with a broad idea of swarm drone optimization for area coverage. Then we refined the problem into a multi-objective task: maximize coverage while minimizing energy use, overlap, and collisions. We researched several algorithm families and divided them among the three team members. My part is focused on learning and control-based approaches.
+
+The current plan is to test Potential Fields first, then Consensus-Based Coordination, and finally Multi-Agent Reinforcement Learning, all evaluated through an energy-aware objective. This gives the project a practical path from a simple baseline to more advanced swarm intelligence while keeping the final Isaac Sim implementation realistic.
