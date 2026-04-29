@@ -66,7 +66,7 @@ def _build_one_drone_env() -> CoverageEnv:
         grid=grid,
         n_drones=1,
         sim=SimConfig(step_seconds=0.1),
-        drone=DroneConfig(sensor_radius=1.5, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=1.6, max_speed=1.5, max_accel=2.5),
         battery=BatteryConfig(),  # F450 reference defaults
     )
     env.reset(seed=0)
@@ -77,6 +77,11 @@ def _build_one_drone_env() -> CoverageEnv:
 
 def hover_endurance_seconds(env: CoverageEnv) -> float:
     """Drone stays at v=0; run until voltage cutoff. Returns sim time elapsed."""
+    # Pin heading + yaw_rate so the visual is consistent (camera doesn't drift
+    # while hovering). Energy model is heading-independent so this is purely
+    # cosmetic for any saved frames / GUI.
+    env.drones[0].heading = 0.0
+    env.drones[0].yaw_rate = 0.0
     safety_steps = 100_000  # ~10,000 sim seconds — far above any realistic depletion
     for _ in range(safety_steps):
         if env.battery_state(0)["depleted"]:
@@ -90,18 +95,23 @@ def cruise_endurance_seconds(env: CoverageEnv, target_speed_cells: float) -> flo
     Drone flies at constant ``target_speed_cells`` (cells/s). Each iteration
     we teleport back to arena center and pin velocity, so wall collisions
     don't zero v and the drain rate stays at the cruise-power level for the
-    entire run.
+    entire run. Heading is pinned to the velocity direction so the camera
+    looks where the drone is moving (matches the demo's policy).
     """
     arena_center = np.array([env.w / 2.0, env.h / 2.0])
     direction = np.array([1.0, 0.0])
+    heading = float(np.arctan2(direction[1], direction[0]))
     safety_steps = 100_000
 
     for _ in range(safety_steps):
         if env.battery_state(0)["depleted"]:
             return env.time_seconds
-        # Pin state before step so env.step computes new_vel = vel + 0·dt = target.
+        # Pin state before step so env.step computes new_vel = vel + 0·dt = target,
+        # and heading stays fixed (yaw_rate=0 means env.step doesn't drift it).
         env.drones[0].pos = arena_center.copy()
         env.drones[0].vel = direction * target_speed_cells
+        env.drones[0].heading = heading
+        env.drones[0].yaw_rate = 0.0
         env.step(np.zeros((1, 2)))
     raise RuntimeError(f"Cruise sim did not deplete within {safety_steps} steps")
 
@@ -345,10 +355,16 @@ def run_gui() -> None:
     def _step_one(env: CoverageEnv) -> None:
         """One physics step in whichever regime is active."""
         if state["phase"] == "hover":
+            # Hover: zero velocity, pin heading so the wedge doesn't drift
+            # visually (energy model is heading-independent).
+            env.drones[0].heading = 0.0
+            env.drones[0].yaw_rate = 0.0
             env.step(np.zeros((1, 2)))
             return
-        # Cruise: pin drone onto the circle, set velocity tangent, then step.
-        # env.step computes new_vel = old_vel + 0·dt = vel, drains P_hover + k·v².
+        # Cruise: pin drone onto the circle, set velocity tangent + heading
+        # along that tangent (so the camera looks where the drone is going,
+        # matching the demo's policy), then step. env.step computes new_vel
+        # = old_vel + 0·dt = vel, drains P_hover + k·v².
         offset = env.drones[0].pos - arena_center
         r_now = float(np.linalg.norm(offset))
         if r_now < 1e-6:
@@ -358,6 +374,8 @@ def run_gui() -> None:
         env.drones[0].pos = arena_center + offset
         tangent = np.array([-offset[1], offset[0]]) / cruise_radius
         env.drones[0].vel = tangent * env.drone_cfg.max_speed
+        env.drones[0].heading = float(np.arctan2(tangent[1], tangent[0]))
+        env.drones[0].yaw_rate = 0.0
         env.step(np.zeros((1, 2)))
 
     def update(_frame_idx: int):

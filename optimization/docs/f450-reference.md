@@ -18,7 +18,7 @@ The components our simulator's calibration is anchored to, sourced from the [Haw
 | Companion computer | NVIDIA Jetson Nano | Adds ~140 g payload |
 | **Total mass** | **~1.9 kg** (frame + motors + ESCs + battery + Pixhawk + Jetson + STEEReoCAM + cabling) | Within Hawk's Work's 1.8 kg max-takeoff spec; our `DroneConfig.mass_kg = 1.9` |
 
-## Camera (STEEReoCAM Nano) — used to derive `sensor_radius`
+## Camera (STEEReoCAM Nano) — used to derive the sensor wedge
 
 Full datasheet + lens datasheet are in [`docs/camera_specs/`](camera_specs/). Key numbers, all cited from those documents:
 
@@ -38,35 +38,54 @@ Full datasheet + lens datasheet are in [`docs/camera_specs/`](camera_specs/). Ke
 | On-board IMU | 6-axis (3D accel + 3D gyro) | Datasheet §3 |
 | Lens mount | M12 (S-mount), pre-calibrated lens pair | Datasheet §3.1 |
 
-### What the camera actually sees at altitude *h*
+### Camera orientation: forward-facing, not downward
 
-The camera's ground footprint is a **rectangle**, not a disc. From the FOV values above, at altitude *h* (AGL) the rectangle dimensions are:
+The STEEReoCAM Nano sits **rigid on the front of the drone, looking forward**. There is no gimbal. To point the camera at something off-axis the drone has to physically reorient — yaw to swing the camera left/right, pitch to tilt up/down, roll for lateral. In our 2D top-down simulator we model **yaw only**; pitch and roll are abstracted as "optimized for whatever the controller is doing." For real flight, controllers will need explicit pitch control to inspect the ground at low altitudes (the camera looks at the horizon during level hover).
+
+### What the camera sees in the XY plane (forward wedge)
+
+Because the camera is forward-facing and we work in 2D, the relevant geometry is the **horizontal wedge** the camera sweeps through at altitude. From the HFOV of 54° and stereo depth range 0.95 – 8 m:
 
 ```
-half-width  = h × tan(54°/2)   = h × tan(27°)    = h × 0.5095
-half-height = h × tan(49.5°/2) = h × tan(24.75°) = h × 0.4607
-diagonal    = h × tan(77.9°/2) = h × tan(38.95°) = h × 0.6868     ← farthest visible corner
+wedge half-angle = HFOV / 2 = 27°
+wedge range      = 8.0 m   (stereo depth ceiling — beyond this, depth is unreliable
+                            but visual sensing still works; we use 8 m as a
+                            conservative coverage range tied to depth quality)
+wedge area       = ½ · r² · θ = ½ · 8² · (54° in rad) = ½ · 64 · 0.942 ≈ 30 m²
 ```
 
-So at any altitude there are three meaningful "radial distances":
+So at any moment a stationary drone covers ~30 m² of forward area. To scan a different direction the drone yaws (`max_yaw_rate ≈ 86°/s` — full 360° scan in ~4.2 s). To cover new ground the drone translates and the wedge slides forward along its heading.
 
-| From drone | What's there | Formula | At h = 16.3 m | At h = 8 m | At h = 5 m |
-|---|---|---|---|---|---|
-| 0 → `h × 0.461` | **Guaranteed in view in all directions** (= inscribed disc, our `sensor_radius`) | `h × tan(VFOV/2)` | **7.51 m** | 3.69 m | 2.30 m |
-| `h × 0.461` → `h × 0.510` | In view along the H-axis (rectangle's longer side) | `h × tan(HFOV/2)` | 8.30 m | 4.08 m | 2.55 m |
-| `h × 0.510` → `h × 0.687` | In view only at the rectangle's corners | `h × tan(DFOV/2)` | **11.19 m** | 5.49 m | 3.43 m |
-| **beyond `h × 0.687`** | **Not in the camera's view at all** — | | | | |
+### Stereo depth range (the source of our 8 m wedge length)
 
-The **diagonal radius (`h × 0.687`)** is the maximum distance the camera can see at altitude *h*. The **inscribed radius (`h × 0.461`)** is the largest disc that's entirely inside the rectangular FOV. The simulator uses the inscribed disc because:
+The **0.95 – 8 m** range applies to **stereo-derived depth** (3D position of points the camera sees). It comes from the 100 mm baseline geometry:
 
-1. **Honest coverage semantics.** "Cell is covered" must mean "the camera definitely photographed this cell". A disc bigger than inscribed would mark cells at the corner-extremes covered when those cells aren't in view on the H- or V-axis directions.
-2. **Worst-case bound.** Whatever direction the drone happens to be facing, the inscribed-disc cells are guaranteed in frame.
+- **Below 0.95 m**: the two stereo views diverge too much (large parallax), correspondence matching fails.
+- **Above 8 m**: parallax drops below the disparity-resolution threshold (sub-pixel for our 3 µm pixels), so depth becomes too noisy to use.
 
-If you'd rather model the *farthest* visible point, use `sensor_radius_from_altitude(altitude, shape="diagonal")`. The `equivalent_area` option splits the difference (disc area = rectangle area).
+For coverage purposes we use 8 m as the wedge's radial range — that's the largest distance at which the drone can confidently localize what it sees. **For future mapping / 3D-reconstruction work**, the same 0.95 – 8 m bound applies and limits useful flight altitude to ≤ 8 m AGL — flying higher means the ground is outside the depth range even if the camera tilts down. Visual sensing works further than 8 m (the lens still resolves features) but we can't recover their 3D position, so it's not useful for the kind of depth-localized coverage the simulator models.
 
-### How far can the camera *visually* resolve detail? (Ground sampling distance)
+### Why specifically `sensor_range = 1.6 cells` (= 8 m)?
 
-The camera's "visual range" isn't a fixed number — it depends on how much detail you need. **Ground sampling distance (GSD)** is the meters of ground each pixel represents:
+Two compounding choices:
+
+1. **`meters_per_cell = 5.0`** was picked so the discrete grid resolves features at sensor scale — see [`simulation-model.md` → World scale](simulation-model.md#world-scale). It also keeps the energy-model calibration (`motion_coeff_w_per_v2 = 13`) intact.
+2. **`sensor_range = 1.6 cells × 5 m/cell = 8 m`** comes directly from the camera's stereo depth ceiling. Beyond 8 m the depth quality drops below the disparity-resolution threshold, so we treat 8 m as the radial coverage limit. The HFOV (54°) is verbatim from the lens datasheet.
+
+If you want to model a tighter range (e.g., to be conservative on depth quality near the ceiling), reduce `sensor_range`:
+
+```python
+from environment import SimConfig, DroneConfig
+
+# Example: 5 m radial range (comfortable depth-quality margin below the 8 m ceiling)
+drone = DroneConfig(sensor_range=1.0)   # 1.0 cells × 5 m/cell = 5 m
+```
+
+Changing `meters_per_cell` requires recalibrating the energy model's `motion_coeff_w_per_v2 = 0.51 × meters_per_cell²` — the verification scripts will catch any drift.
+
+### Note on ground sampling distance (GSD)
+
+GSD describes what a *downward-aimed* shot would resolve at altitude *h* — useful for inspection / mapping flights that pitch the drone forward to look at the ground:
 
 ```
 GSD = h × pixel_pitch / focal_length = h × 3 µm / 4.3 mm = h × 0.698 mm per meter of altitude
@@ -76,49 +95,9 @@ GSD = h × pixel_pitch / focal_length = h × 3 µm / 4.3 mm = h × 0.698 mm per 
 |---|---|---|
 | 5 m | 3.5 mm/pixel | ~1 cm |
 | 8 m | 5.6 mm/pixel | ~1.7 cm |
-| 16.3 m (default) | 11.4 mm/pixel | ~3.4 cm |
-| 30 m | 20.9 mm/pixel | ~6.3 cm |
-| 50 m | 34.9 mm/pixel | ~10.5 cm |
-| 100 m | 69.8 mm/pixel | ~21 cm |
+| 10 m (max) | 7.0 mm/pixel | ~2.1 cm |
 
-So the camera could in principle visually cover the ground from 50 m AGL or higher, with the practical limit being whatever feature size your mission needs to resolve. There is **no hard "max visual range" in the camera spec** — only the depth range has one.
-
-### Stereo depth range (separate from visual)
-
-The **0.95 – 8 m** range applies only to **stereo-derived depth** (i.e., 3D position of points the camera sees). It comes from the 100 mm stereo baseline geometry:
-
-- **Below 0.95 m**: the two stereo views diverge too much (large parallax), correspondence matching fails.
-- **Above 8 m**: parallax drops below the disparity-resolution threshold (sub-pixel for our 3 µm pixels), so depth becomes too noisy to use.
-
-Visual coverage (does the cell appear in any image?) **works at any altitude**. Depth-localized observations (where in 3D is this thing?) require `0.95 m ≤ altitude ≤ 8 m`.
-
-For mapping use-cases that need depth (3D reconstruction, obstacle avoidance, terrain modeling), constrain flight altitude to ≤ 8 m. For pure visual coverage (the question this simulator answers), altitude is unconstrained by the camera — only by mission requirements (target detail, area to cover, battery).
-
-### Why specifically `sensor_radius = 7.5 m` (= 1.5 cells × 5 m/cell)?
-
-Two compounding choices:
-
-1. **`meters_per_cell = 5.0`** was picked so the discrete grid resolves features at sensor scale — see [`simulation-model.md` → World scale](simulation-model.md#world-scale) for the trade-off vs. picking the cell size from drone-body or max-speed.
-2. **`sensor_radius = 1.5 cells`** is the smallest integer-and-a-half value that gives the discrete sensor disc more than a single cell (at 1.5 cells centered on a cell, the disc covers 9 cells: the center + 4 axis-adjacent + 4 diagonal-adjacent — verified in [`test_distance.py`](verification.md#test_distancepy)).
-
-Multiplying: `1.5 cells × 5 m/cell = 7.5 m`. Working backwards through the inscribed-disc formula: `h = 7.5 / 0.461 = 16.3 m AGL`. That's the altitude this default implicitly assumes. **The 7.5 m number didn't come from "we want the camera to see 7.5 m"; it came from clean cell-grid math, with the implicit altitude derived afterward.**
-
-If you want the model to reflect a different operating altitude, use the helper:
-
-```python
-from environment import sensor_radius_from_altitude, SimConfig, DroneConfig
-
-# Example: depth-reliable coverage at the camera's max useful altitude (8 m)
-r_m = sensor_radius_from_altitude(altitude_m=8.0, shape="inscribed")  # → 3.69 m
-mpc = 2.5  # tighter cell size for the smaller footprint
-sim = SimConfig(meters_per_cell=mpc, flight_altitude_m=8.0)
-drone = DroneConfig(sensor_radius=r_m / mpc)  # → 1.48 cells
-
-# Example: max visible (diagonal corner) instead of inscribed-disc conservative
-r_max = sensor_radius_from_altitude(altitude_m=16.3, shape="diagonal")  # → 11.19 m
-```
-
-`sensor_radius_from_altitude()` takes `shape` ∈ `{"inscribed", "equivalent_area", "diagonal"}`. Note that changing `meters_per_cell` requires recalibrating the energy model's `motion_coeff_w_per_v2 = 0.51 × meters_per_cell²` — the verification scripts will catch any drift.
+Our build's max altitude is 10 m (well within the camera's depth range), so even tilted-down inspection shots resolve features down to ~2 cm. Plenty for swarm-coverage tasks that look for cars, people, equipment, or terrain features. The simulator itself doesn't model the downward projection — the wedge is purely horizontal — so this table is reference only for mission planning.
 
 ## Battery options the F450 supports
 

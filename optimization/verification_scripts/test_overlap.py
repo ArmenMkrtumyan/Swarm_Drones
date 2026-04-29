@@ -6,8 +6,10 @@ calling _update_coverage() each step (bypassing the action/integration loop).
 This isolates the coverage bookkeeping from physics so the predicted counts
 fall out of pure geometry.
 
-Scenario (corridor of 25×5 cells, walls on borders, sensor_radius = 0.5 so
-the disc covers exactly one cell — making "tile entered" = "cell entered"):
+Scenario (corridor of 25×5 cells, walls on borders, sensor_range = 0.01 so
+the wedge is degenerate and only the drone's own-cell special case contributes
+— each drone covers exactly its current cell, regardless of heading. This
+makes "tile entered" = "cell entered", giving us hand-computable expectations):
 
   Phase 0: Drone 1 spawns at (2.5, 2.5). Drone 2 parks at (2.5, 1.5).
   Phase A: Drone 1 walks east (2.5→22.5, 2.5) painting cells (2,2)..(22,2).
@@ -50,6 +52,22 @@ def _clear_coverage_state(env: CoverageEnv) -> None:
     env.covered[env.grid == WALL] = True
 
 
+def _teleport_drone(env: CoverageEnv, drone_idx: int, new_pos: tuple) -> None:
+    """
+    Move drone to ``new_pos`` and snap its heading to point in the direction
+    of the teleport (so the camera looks where the drone just went). This is
+    purely for visual consistency in the GUI / saved PNGs — the test
+    assertions are coverage counts, which are heading-independent at our
+    sensor_range=0.01.
+    """
+    target = np.array(new_pos, dtype=np.float64)
+    delta = target - env.drones[drone_idx].pos
+    if float(np.linalg.norm(delta)) > 1e-9:
+        env.drones[drone_idx].heading = float(np.arctan2(delta[1], delta[0]))
+        env.drones[drone_idx].yaw_rate = 0.0
+    env.drones[drone_idx].pos = target
+
+
 def _print_metrics(env: CoverageEnv, header: str) -> None:
     print(f"\n--- {header} ---")
     print(f"{'metric':25s}  " + "  ".join(f"D{i+1:>2}" for i in range(env.n_drones)))
@@ -88,7 +106,7 @@ def _build_env() -> CoverageEnv:
         grid=grid,
         n_drones=2,
         sim=SimConfig(step_seconds=0.1),
-        drone=DroneConfig(sensor_radius=0.5, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=0.01, max_speed=1.5, max_accel=2.5),
     )
     env.reset(seed=0)
     # Fixed palette seed so the visuals look the same on every run (visual diff
@@ -97,6 +115,15 @@ def _build_env() -> CoverageEnv:
 
     env.drones[0].pos = np.array([2.5, 2.5])  # Drone 1 — the painter
     env.drones[1].pos = np.array([2.5, 1.5])  # Drone 2 — parked off the y=2 row
+    # Pin heading + yaw_rate so the camera always points along the direction
+    # of teleport-motion (set per scripted step in the loop below). Without
+    # this, the wedge would point in whatever random direction reset() drew
+    # — fine for the assertions (sensor_range=0.01 makes the wedge degenerate)
+    # but visually misleading.
+    env.drones[0].heading = 0.0  # facing east; updated per scripted step
+    env.drones[0].yaw_rate = 0.0
+    env.drones[1].heading = 0.0
+    env.drones[1].yaw_rate = 0.0
     _clear_coverage_state(env)
     env._update_coverage()
     return env
@@ -146,7 +173,7 @@ def run_headless(env: CoverageEnv) -> bool:
             render_frame(env, save_path=str(snapshot_path[last_phase]))
             _print_metrics(env, f"After Phase {last_phase}")
             last_phase = phase
-        env.drones[drone_idx].pos = np.array(pos)
+        _teleport_drone(env, drone_idx, pos)
         env._update_coverage()
     render_frame(env, save_path=str(snapshot_path[last_phase]))
     _print_metrics(env, f"After Phase {last_phase}")
@@ -228,7 +255,7 @@ def run_gui(env: CoverageEnv) -> None:
         # final state for ~2 seconds so the user has time to read the counters.
         if frame_idx < n_steps:
             drone_idx, pos, label = script[frame_idx]
-            env.drones[drone_idx].pos = np.array(pos)
+            _teleport_drone(env, drone_idx, pos)
             env._update_coverage()
         else:
             label = "Done — every visit counted. Read self↺ + wasted visits on the panel."

@@ -189,7 +189,7 @@ def random_free_positions(
     Sample `n` distinct cell-center positions from free cells, in (x, y) order.
     Uses min_separation (in cell units) to avoid spawning drones on top of each
     other or sharing the same coverage footprint at t=0. The default 1.5 keeps
-    drones from starting inside the same DroneConfig.sensor_radius=1.5 disc.
+    drones from starting inside the same DroneConfig.sensor_range=1.6 wedge.
     """
     rng = np.random.default_rng(seed)
     free = _free_cells(grid)

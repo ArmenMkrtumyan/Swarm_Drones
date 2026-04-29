@@ -8,6 +8,7 @@ Interactive:    animate(env, policy_fn, n_steps=200)
 from __future__ import annotations
 
 import colorsys
+import math
 import os
 import sys
 from typing import Callable, Optional
@@ -28,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import ListedColormap
+from matplotlib.patches import Wedge as MplWedge
 
 from constants import (
     BATTERY_PANEL_FONTSIZE,
@@ -187,14 +189,39 @@ def _render_map(env: CoverageEnv, ax) -> None:
                 zorder=5,
             )
 
+    # Forward-wedge sensor footprint per drone — the camera is fixed
+    # forward-facing on the body, so the wedge points along the drone's heading
+    # (yaw). Wedge radius = sensor_range, half-angle = HFOV/2.
+    headings = env.headings()
+    sensor_range = env.drone_cfg.sensor_range
+    hfov_deg = math.degrees(env.drone_cfg.sensor_hfov_rad)
     for i, p in enumerate(pos):
         circle_color = _drone_render_color(i, depleted[i])
-        circ = plt.Circle(
+        heading_deg = math.degrees(headings[i])
+        # matplotlib.patches.Wedge angles are in degrees, measured CCW from +x.
+        # Our heading uses the same convention (heading=0 → +x).
+        wedge = MplWedge(
             (p[0], p[1]),
-            env.drone_cfg.sensor_radius,
-            fill=False, color=circle_color, alpha=SENSOR_CIRCLE_ALPHA, linestyle="--",
+            r=sensor_range,
+            theta1=heading_deg - hfov_deg / 2,
+            theta2=heading_deg + hfov_deg / 2,
+            fill=False, color=circle_color, alpha=SENSOR_CIRCLE_ALPHA,
+            linestyle="--", linewidth=1.0,
         )
-        ax.add_patch(circ)
+        ax.add_patch(wedge)
+
+        # Heading arrow on the drone marker — small, opaque, so the body's
+        # orientation is visible even when stationary (no velocity arrow).
+        arrow_len = 0.5  # cells; just a visual indicator, doesn't represent magnitude
+        ax.arrow(
+            p[0], p[1],
+            arrow_len * math.cos(headings[i]),
+            arrow_len * math.sin(headings[i]),
+            head_width=0.18, head_length=0.18,
+            fc=circle_color, ec="black", linewidth=0.5,
+            length_includes_head=True, zorder=5,
+        )
+
         label = f"D{i + 1}" + (" ☠" if depleted[i] else "")
         ax.annotate(
             label, (p[0], p[1]),

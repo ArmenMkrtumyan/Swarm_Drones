@@ -18,7 +18,7 @@ The simulator is calibrated to the actual hardware this project flies — the **
 | Battery | 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60 |
 | Props | 9450 self-tightening (CW + CCW) |
 | Flight controller | Pixhawk 2.4.8, PX4 autopilot |
-| Camera | e-con Systems **STEEReoCAM Nano** (2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, **HFOV 54° / VFOV 49.5°**, 0.95–8 m stereo depth range, on-board 6-axis IMU) |
+| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. |
 | Companion | NVIDIA Jetson Nano |
 | Total mass | ~1.9 kg |
 

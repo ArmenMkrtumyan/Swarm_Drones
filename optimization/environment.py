@@ -5,7 +5,9 @@ Designed so the same control logic (Potential Fields, Consensus, MARL)
 can later be ported to Isaac Sim with minimal changes:
     - Actions are 2D acceleration commands (not grid moves).
     - max_speed and max_accel mirror real quadcopter limits.
-    - Sensing is range-limited per drone (sensor_radius).
+    - Sensing is a forward wedge per drone (sensor_range, sensor_hfov_rad,
+      drone heading) — modelling the fixed forward-facing STEEReoCAM Nano.
+      Drones must yaw to redirect the wedge; see DroneConfig for params.
     - Coverage is tracked on a discrete grid for objective evaluation.
 """
 
@@ -24,53 +26,15 @@ from maze import FREE, WALL, random_free_positions
 #     HFOV = 54°, VFOV = 49.5°, DFOV = 77.9°
 #     Stereo depth range = 0.95 – 8 m (beyond 8 m, depth quality degrades)
 #     Sensor: 2× OV2311, 100 mm baseline, 1600×1300 per eye, 30 fps stereo
-# Used by sensor_radius_from_altitude() below; if you change the camera,
-# update these constants in lock-step with the docs.
+# The camera is fixed forward-facing on the drone body — there is no gimbal.
+# Coverage is modeled as a forward WEDGE in the XY plane: apex at the drone's
+# position, opening along the drone's heading (yaw), with half-angle = HFOV/2
+# and radial range = depth ceiling (8 m). To scan a different direction, the
+# drone must yaw — which is why Drone now carries `heading` and `yaw_rate`.
 STEEREOCAM_HFOV_DEG = 54.0
 STEEREOCAM_VFOV_DEG = 49.5
 STEEREOCAM_DEPTH_MIN_M = 0.95
 STEEREOCAM_DEPTH_MAX_M = 8.0
-
-
-def sensor_radius_from_altitude(
-    altitude_m: float,
-    hfov_deg: float = STEEREOCAM_HFOV_DEG,
-    vfov_deg: float = STEEREOCAM_VFOV_DEG,
-    shape: str = "inscribed",
-) -> float:
-    """
-    Convert a real-world camera FOV + altitude into a disc-equivalent
-    sensor_radius in meters. The camera footprint is rectangular; we
-    approximate it with a disc using one of three conventions:
-
-        - "inscribed": disc fits inside the rectangle. CONSERVATIVE — every
-          cell inside the disc is guaranteed inside the camera's actual view.
-          Radius = altitude × min(tan(HFOV/2), tan(VFOV/2)).
-        - "equivalent_area": disc has the same area as the rectangle. A
-          balanced choice for "how much ground is in view per snapshot."
-          Radius = altitude × √(4 · tan(HFOV/2) · tan(VFOV/2) / π).
-        - "diagonal": disc covers the rectangle's corners. LIBERAL — some
-          cells inside the disc are outside the actual FOV (in the corners).
-          Radius = altitude × √(tan²(HFOV/2) + tan²(VFOV/2)).
-
-    Defaults match the project's STEEReoCAM Nano (see docs/camera_specs/
-    for the datasheet). Pass altitude in meters, get radius in meters; the
-    caller is responsible for dividing by `meters_per_cell` to get cells.
-
-    Tip: real F450 swarm coverage missions typically run at 5–16 m AGL.
-    Beyond ~8 m the stereo depth quality drops below the camera spec, but
-    visual coverage (which is all our model tracks) still works.
-    """
-    hw = altitude_m * math.tan(math.radians(hfov_deg / 2))
-    hh = altitude_m * math.tan(math.radians(vfov_deg / 2))
-    if shape == "inscribed":
-        return min(hw, hh)
-    if shape == "equivalent_area":
-        return math.sqrt(4 * hw * hh / math.pi)
-    if shape == "diagonal":
-        return math.hypot(hw, hh)
-    raise ValueError(f"unknown shape {shape!r}; "
-                     f"expected one of: inscribed, equivalent_area, diagonal")
 
 
 @dataclass
@@ -79,29 +43,23 @@ class SimConfig:
     Environment-level settings (apply to the whole sim, not any one drone).
 
     `meters_per_cell` is the world-scale knob: how many real meters one grid
-    cell represents. Default 5.0 is derived from the STEEReoCAM Nano camera
-    footprint at the implicit `flight_altitude_m` below (inscribed-disc
-    convention). The defaults reproduce:
+    cell represents. Default 5.0 keeps the existing energy-model calibration
+    (motion_coeff_w_per_v2 = 13 was anchored to this value). At 5 m/cell:
 
-        sensor_radius = 1.5 cells × 5 m/cell = 7.5 m
-            ≈ inscribed disc of STEEReoCAM (HFOV 54°, VFOV 49.5°)
-              at h = 7.5 / tan(49.5°/2) ≈ 16.3 m AGL
+        sensor_range  = 1.6 cells × 5 m/cell = 8.0 m  (STEEReoCAM stereo depth ceiling)
         max_speed     = 1.5 cells/s × 5      = 7.5 m/s  (realistic F450 cruise)
         max_accel     = 2.5 cells/s² × 5     = 12.5 m/s² ≈ 1.3 g
         21×21 map                            = 105 m × 105 m
 
-    To rescale for a different altitude, use sensor_radius_from_altitude()
-    above and adjust SimConfig.meters_per_cell + DroneConfig.sensor_radius
-    in lock-step. Note that 16 m AGL is above the STEEReoCAM's 0.95–8 m
-    stereo-depth ceiling — the camera sees that far visually, but stereo
-    depth degrades. For depth-reliable coverage, fly at h ≤ 8 m.
+    `flight_altitude_max_m = 10.0` is the operational ceiling our build is
+    intended for (well within the camera's 0.95-8 m stereo depth range, no
+    gimbal needed for a downward look since the camera is forward-facing
+    and the drone yaws/pitches to redirect it). It's informational only —
+    the sim is 2D and treats altitude as an abstraction.
     """
-    step_seconds: float = 0.1       # how much sim time one env.step() advances
-    meters_per_cell: float = 5.0    # cell ↔ meter conversion (see class docstring)
-    flight_altitude_m: float = 16.3 # informational: AGL altitude assumed by sensor_radius
-                                    # default. NOT used in physics — sensor_radius is
-                                    # what the model uses. Stored here so it's discoverable
-                                    # in the panel / printouts.
+    step_seconds: float = 0.1            # how much sim time one env.step() advances
+    meters_per_cell: float = 5.0         # cell ↔ meter conversion (see class docstring)
+    flight_altitude_max_m: float = 10.0  # operational ceiling; informational, not in physics
 
 
 @dataclass
@@ -111,21 +69,35 @@ class DroneConfig:
     `DroneConfig` to every drone (homogeneous fleet). To support heterogeneous
     swarms later, accept a list of `DroneConfig` instead.
 
-    `sensor_radius` is the disc-equivalent ground footprint of the downward
-    camera (STEEReoCAM Nano on this drone — see docs/f450-reference.md and
-    docs/camera_specs/ for the datasheet). At the default 5 m/cell + 1.5 cells,
-    the footprint disc is 7.5 m, derived from the inscribed disc of the
-    camera's 54° × 49.5° rectangle at ~16 m AGL. To rescale for different
-    altitudes use environment.sensor_radius_from_altitude().
+    Coverage is modeled as a forward WEDGE — apex at the drone's position,
+    opening along its heading (yaw), with half-angle = sensor_hfov_rad/2 and
+    radial range = sensor_range. The drone must yaw to scan new directions.
+
+    Defaults map the real STEEReoCAM Nano (forward-facing, fixed mount):
+        sensor_range     = 1.6 cells × 5 m/cell = 8.0 m
+                           (camera's stereo depth ceiling; visual range is
+                           further but unreliable for depth-localized coverage)
+        sensor_hfov_rad  = 54° (from the lens datasheet at docs/camera_specs/)
+        max_yaw_rate     = 1.5 rad/s ≈ 86°/s — typical quadcopter spec
+        max_yaw_accel    = 4.0 rad/s² (reaches max_yaw_rate in ~0.4 s)
     """
-    sensor_radius: float = 1.5      # cells (= 7.5 m at meters_per_cell=5; STEEReoCAM
-                                    # inscribed disc at ~16 m AGL — see SimConfig)
-    max_speed: float = 1.0          # cells / second (≈ 5 m/s at meters_per_cell=5)
-    max_accel: float = 2.0          # cells / second^2 (≈ 10 m/s² at meters_per_cell=5)
-    drone_radius: float = 0.05      # cells (≈ 0.25 m: Hawk's Work F450 half-width); collision only
-    mass_kg: float = 1.9            # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
-                                    # Informational only — power model uses back-calculated
-                                    # hover_power_w rather than deriving from m·g and rotor area.
+    # Forward-wedge sensor (STEEReoCAM Nano forward-facing, see docs/camera_specs/)
+    sensor_range: float = 1.6                          # cells (= 8 m at 5 m/cell — depth ceiling)
+    sensor_hfov_rad: float = math.radians(54.0)        # STEEReoCAM HFOV (lens datasheet §5)
+
+    # Translation
+    max_speed: float = 1.0                             # cells / second (≈ 5 m/s at 5 m/cell)
+    max_accel: float = 2.0                             # cells / second² (≈ 10 m/s² at 5 m/cell)
+
+    # Yaw (camera scanning) — independent of translation in this 2D model.
+    # Real quadcopters can yaw at 90-200°/s; we use 86°/s as a conservative default.
+    max_yaw_rate: float = 1.5                          # rad / s
+    max_yaw_accel: float = 4.0                         # rad / second²
+
+    drone_radius: float = 0.05    # cells (≈ 0.25 m: Hawk's Work F450 half-width); collision only
+    mass_kg: float = 1.9          # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
+                                  # Informational only — power model uses back-calculated
+                                  # hover_power_w rather than deriving from m·g and rotor area.
 
 
 @dataclass
@@ -199,9 +171,11 @@ class BatteryConfig:
 
 @dataclass
 class Drone:
-    pos: np.ndarray                 # shape (2,), float, in cell units (x, y)
+    pos: np.ndarray                              # shape (2,), float, cell units (x, y)
     vel: np.ndarray = field(default_factory=lambda: np.zeros(2))
-    battery_j: float = 0.0          # set by env on reset
+    heading: float = 0.0                         # yaw, radians; 0 = +x direction
+    yaw_rate: float = 0.0                        # rad/s, signed
+    battery_j: float = 0.0                       # set by env on reset
 
 
 class CoverageEnv:
@@ -227,7 +201,7 @@ class CoverageEnv:
         self.covered = np.zeros_like(self.grid, dtype=bool)
         self.covered[self.grid == WALL] = True  # walls do not count as coverable
         # Per-drone coverage masks: True wherever this specific drone has been
-        # within sensor_radius of a free cell. Walls stay False here so each
+        # within the forward wedge of a free cell. Walls stay False here so each
         # drone's fraction is over coverable cells only. Sum across drones can
         # exceed the global mask — the gap measures overlap.
         self.drone_covered = np.zeros((n_drones, self.h, self.w), dtype=bool)
@@ -251,7 +225,14 @@ class CoverageEnv:
     def reset(self, seed: Optional[int] = None) -> None:
         positions = random_free_positions(self.grid, self.n_drones, seed=seed)
         full = self.battery_cfg.initial_energy_j
-        self.drones = [Drone(pos=p.copy(), battery_j=full) for p in positions]
+        # Random initial heading per drone, in [-π, π], from the same seed so
+        # reset(seed=N) gives reproducible heading + position pairs.
+        rng = np.random.default_rng(seed)
+        headings = rng.uniform(-math.pi, math.pi, size=self.n_drones)
+        self.drones = [
+            Drone(pos=p.copy(), heading=float(h), battery_j=full)
+            for p, h in zip(positions, headings)
+        ]
         self.covered[:] = False
         self.covered[self.grid == WALL] = True
         self.drone_covered[:] = False
@@ -266,8 +247,18 @@ class CoverageEnv:
 
     def step(self, actions: np.ndarray) -> None:
         """
-        actions: shape (n_drones, 2), interpreted as acceleration commands.
-        Clipped to max_accel; resulting velocity clipped to max_speed.
+        actions: shape (n_drones, 3), interpreted as commanded
+            [ax, ay, alpha_yaw]
+        in WORLD frame:
+            - (ax, ay) = linear acceleration in cell-units / s². The 2D vector
+              (ax, ay) is rescaled (magnitude-preserving) so |a| ≤ max_accel.
+            - alpha_yaw = yaw acceleration in rad / s². Clipped scalar so
+              |alpha_yaw| ≤ max_yaw_accel. Independent of translation
+              (real quadcopters yaw via differential motor torque, no body tilt).
+
+        For backwards compatibility with controllers that only emit (ax, ay),
+        an action of shape (n_drones, 2) is also accepted and treated as
+        alpha_yaw = 0 (no yaw command).
 
         If `self.is_done()` is already True (100% coverage reached on a previous
         step), this becomes a no-op: drones are forced to zero velocity, no
@@ -277,12 +268,26 @@ class CoverageEnv:
         if self.is_done():
             for d in self.drones:
                 d.vel = np.zeros(2, dtype=np.float64)
+                d.yaw_rate = 0.0
             return
 
-        actions = np.asarray(actions, dtype=np.float64).reshape(self.n_drones, 2)
-        a_norm = np.linalg.norm(actions, axis=1, keepdims=True)
+        actions = np.asarray(actions, dtype=np.float64)
+        if actions.ndim == 2 and actions.shape[1] == 2:
+            # Back-compat: 2D actions → pad alpha_yaw = 0.
+            zeros = np.zeros((actions.shape[0], 1), dtype=np.float64)
+            actions = np.concatenate([actions, zeros], axis=1)
+        actions = actions.reshape(self.n_drones, 3)
+
+        # Linear acceleration: rescale by magnitude so direction is preserved
+        # when the controller commands beyond max_accel.
+        lin = actions[:, :2]
+        a_norm = np.linalg.norm(lin, axis=1, keepdims=True)
         scale = np.minimum(1.0, self.drone_cfg.max_accel / np.maximum(a_norm, 1e-9))
-        accel = actions * scale
+        accel_lin = lin * scale
+
+        # Yaw acceleration: clamp scalar.
+        accel_yaw = np.clip(actions[:, 2], -self.drone_cfg.max_yaw_accel,
+                            self.drone_cfg.max_yaw_accel)
 
         step_seconds = self.sim_cfg.step_seconds
         cutoff_j = self.battery_cfg.cutoff_energy_j
@@ -291,9 +296,11 @@ class CoverageEnv:
             # Voltage cutoff: depleted drones freeze in place and stop draining.
             if drone.battery_j <= cutoff_j:
                 drone.vel = np.zeros(2, dtype=np.float64)
+                drone.yaw_rate = 0.0
                 continue
 
-            new_vel = drone.vel + accel[i] * step_seconds
+            # ---- linear motion ----
+            new_vel = drone.vel + accel_lin[i] * step_seconds
             v_norm = np.linalg.norm(new_vel)
             if v_norm > self.drone_cfg.max_speed:
                 new_vel *= self.drone_cfg.max_speed / v_norm
@@ -303,9 +310,25 @@ class CoverageEnv:
             drone.pos = new_pos
             drone.vel = new_vel
 
-            # Battery drain: hover power plus a quadratic-in-speed motion adder.
+            # ---- yaw (camera scanning) ----
+            new_yaw_rate = drone.yaw_rate + accel_yaw[i] * step_seconds
+            new_yaw_rate = float(np.clip(new_yaw_rate,
+                                         -self.drone_cfg.max_yaw_rate,
+                                         self.drone_cfg.max_yaw_rate))
+            # Wrap heading into [-π, π] to keep numerical math stable over long runs.
+            new_heading = drone.heading + new_yaw_rate * step_seconds
+            new_heading = (new_heading + math.pi) % (2 * math.pi) - math.pi
+            drone.yaw_rate = new_yaw_rate
+            drone.heading = new_heading
+
+            # ---- battery ----
+            # Energy model unchanged from disc version: P_hover + k·|v|². Yaw
+            # has its own (small) energy cost in real flight via differential
+            # motor torque, but we don't include it — see docs/battery-model.md
+            # *Intentionally omitted* for the rationale.
             speed_sq = float(new_vel @ new_vel)
-            power_w = self.battery_cfg.hover_power_w + self.battery_cfg.motion_coeff_w_per_v2 * speed_sq
+            power_w = (self.battery_cfg.hover_power_w
+                       + self.battery_cfg.motion_coeff_w_per_v2 * speed_sq)
             drone.battery_j = max(cutoff_j, drone.battery_j - power_w * step_seconds)
 
         self._update_coverage()
@@ -357,18 +380,43 @@ class CoverageEnv:
     # -------- coverage --------
 
     def _update_coverage(self) -> None:
-        r = self.drone_cfg.sensor_radius
         ys = np.arange(self.h)[:, None] + 0.5
         xs = np.arange(self.w)[None, :] + 0.5
         free_mask = self.grid == FREE
 
+        r = self.drone_cfg.sensor_range
+        cos_half_fov = math.cos(self.drone_cfg.sensor_hfov_rad / 2)
+
         for i, drone in enumerate(self.drones):
             dx = xs - drone.pos[0]
             dy = ys - drone.pos[1]
-            footprint = ((dx * dx + dy * dy) <= r * r) & free_mask
+            dist_sq = dx * dx + dy * dy
+            in_range = dist_sq <= r * r
 
-            # Entry events: cells newly inside the disc since last step. Hovering
-            # generates 0 entries (cells stay inside the disc → no transition).
+            # Wedge angular test: a cell is in the forward wedge iff the unit
+            # vector from drone to cell-center has cos(angle-with-heading)
+            # ≥ cos(HFOV/2). Equivalent (and division-free):
+            #     (dx·hx + dy·hy)  ≥  cos(HFOV/2) · √(dx² + dy²)
+            # which lets us avoid a sqrt → square both sides when LHS ≥ 0:
+            #     LHS² ≥ cos²(HFOV/2) · dist²    AND    LHS ≥ 0
+            hx = math.cos(drone.heading)
+            hy = math.sin(drone.heading)
+            dot = dx * hx + dy * hy           # signed: > 0 means cell is forward of drone
+            in_angle = (dot > 0) & (dot * dot >= cos_half_fov * cos_half_fov * dist_sq)
+
+            # The drone's own cell is special: dist ≈ 0, dot ≈ 0, angle is
+            # undefined. Always include the cell containing the drone's center
+            # so a stationary drone sees at least its current cell.
+            own_cx, own_cy = int(drone.pos[0]), int(drone.pos[1])
+            own_cell = np.zeros_like(in_range)
+            if 0 <= own_cy < self.h and 0 <= own_cx < self.w:
+                own_cell[own_cy, own_cx] = True
+
+            footprint = ((in_range & in_angle) | own_cell) & free_mask
+
+            # Entry events: cells newly inside the wedge since last step.
+            # Yawing in place → wedge sweeps → new cells become entries.
+            # A drone hovering with constant heading generates 0 entries.
             entries = footprint & ~self.prev_footprint[i]
             self.entry_count[i] += entries.astype(np.int32)
 
@@ -500,6 +548,14 @@ class CoverageEnv:
 
     def velocities(self) -> np.ndarray:
         return np.stack([d.vel for d in self.drones])
+
+    def headings(self) -> np.ndarray:
+        """Per-drone yaw angles in radians, shape (n_drones,)."""
+        return np.array([d.heading for d in self.drones], dtype=np.float64)
+
+    def yaw_rates(self) -> np.ndarray:
+        """Per-drone yaw rates in rad/s, shape (n_drones,)."""
+        return np.array([d.yaw_rate for d in self.drones], dtype=np.float64)
 
     # -------- battery --------
 

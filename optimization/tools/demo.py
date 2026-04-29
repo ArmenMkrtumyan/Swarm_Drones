@@ -61,18 +61,87 @@ def _output_prefix(save_arg: str | None) -> str:
 
 def random_policy_with_hover(env: CoverageEnv) -> np.ndarray:
     """
-    Drone 0 ALWAYS hovers (zero acceleration → stays at v=0 from reset onward).
-    All other drones get random Gaussian acceleration commands.
+    Drone 0 ALWAYS hovers (zero linear AND yaw acceleration → stays put with
+    constant heading from reset onward). All other drones use a "yaw +
+    brake → realign → accelerate forward" pattern that keeps the camera
+    looking where the drone is actually moving.
 
     The hover drone is a permanent battery sanity check: its drain rate must
     equal P_hover exactly (= hover_power_w / (V·3.6) mAh/s), so any regression
     in the energy model shows up as a wrong depletion time on every demo run.
 
-    Seeding by step_count makes runs reproducible across re-renders.
+    **Why this is more involved than just "push along heading"**: the env has
+    no atmospheric drag, so velocity persists until actively decelerated.
+    If the drone yaws while moving, its momentum keeps carrying it in the
+    OLD direction even though the camera now points elsewhere. To prevent
+    that, we explicitly brake when velocity is misaligned with heading:
+
+        if |v_dir − heading| < align_threshold  (or stationary):
+            push forward along heading at random magnitude
+        elif moving:
+            brake — push opposite to velocity until either it slows below
+                    move_threshold or yaw has caught up enough to be aligned
+        else:
+            no force (yaw will eventually realign; translation will resume)
+
+    Effect: drone drifts forward when aligned, brakes when yaw outpaces
+    motion, and resumes forward motion once realigned. The wedge always
+    points within ~17° of actual motion.
+
+    A different controller (Potential Fields, Consensus, MARL) is free to
+    emit world-frame (ax, ay) and treat yaw independently — that's what the
+    env actually accepts. This braking policy is a demo choice, not a
+    physics constraint.
+
+    Action shape is (n_drones, 3) = [ax_world, ay_world, alpha_yaw]. Seeding
+    by step_count makes runs reproducible across re-renders.
     """
     rng = np.random.default_rng(env.step_count)
-    actions = rng.normal(0.0, env.drone_cfg.max_accel, size=(env.n_drones, 2))
-    actions[0] = 0.0  # hover-verify drone
+    actions = np.zeros((env.n_drones, 3), dtype=np.float64)
+
+    velocities = env.velocities()
+    speeds = np.linalg.norm(velocities, axis=1)
+    headings = env.headings()
+
+    # Velocity direction. atan2(0, 0) = 0 in numpy, which is fine — when the
+    # drone is stationary the alignment check is meaningless and we fall
+    # through to the "push forward along heading" branch via the moving
+    # gate below.
+    v_dir = np.arctan2(velocities[:, 1], velocities[:, 0])
+    v_err = (v_dir - headings + np.pi) % (2 * np.pi) - np.pi  # in [-π, π]
+
+    align_threshold = 0.3   # rad ≈ 17°. Within this, drone can push forward.
+    move_threshold = 0.1    # cells/s. Below this, momentum is small enough to ignore.
+    aligned = np.abs(v_err) < align_threshold
+    moving = speeds > move_threshold
+
+    # Branch A: "push forward along heading" with random magnitude. Used
+    # whenever the drone is aligned with motion OR stationary (no momentum
+    # to worry about).
+    fwd_mag = rng.uniform(0.0, env.drone_cfg.max_accel, size=env.n_drones)
+    forward_ax = fwd_mag * np.cos(headings)
+    forward_ay = fwd_mag * np.sin(headings)
+
+    # Branch B: "brake" — push opposite to current velocity at full magnitude
+    # until momentum drops below move_threshold or yaw catches up. Safe-guard
+    # for the speed=0 corner so the unit-vector division doesn't NaN.
+    safe_speeds = np.maximum(speeds, 1e-9)
+    brake_ax = -env.drone_cfg.max_accel * velocities[:, 0] / safe_speeds
+    brake_ay = -env.drone_cfg.max_accel * velocities[:, 1] / safe_speeds
+
+    # Apply the right branch per drone. If misaligned AND moving → brake;
+    # otherwise (aligned OR stationary) → push forward.
+    use_brake = (~aligned) & moving
+    actions[:, 0] = np.where(use_brake, brake_ax, forward_ax)
+    actions[:, 1] = np.where(use_brake, brake_ay, forward_ay)
+
+    # Yaw drift — kept gentle (std = 0.2 × max_yaw_accel) so heading doesn't
+    # outpace what the velocity loop can follow. Larger std would fight the
+    # brake-and-realign pattern by yawing the drone away from velocity faster
+    # than the brake can decelerate.
+    actions[:, 2] = rng.normal(0.0, 0.2 * env.drone_cfg.max_yaw_accel, size=env.n_drones)
+
+    actions[0] = 0.0  # hover-verify drone — no motion, no yaw
     return actions
 
 
@@ -205,7 +274,7 @@ def main() -> None:
         grid=grid,
         n_drones=args.drones,
         sim=SimConfig(step_seconds=0.1),
-        drone=DroneConfig(sensor_radius=1.5, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=1.6, max_speed=1.5, max_accel=2.5),
     )
     env.reset(seed=args.seed)
     # Random palette rotation each run (seed=None = OS entropy). Color choice

@@ -12,11 +12,12 @@ constants — is wrong. This script asserts:
   3. Linear motion: a drone at constant velocity for N steps moves
      `v_cells · N · dt` cells, which equals `v_cells · N · dt · m_per_cell`
      meters. Verified by accumulating per-step displacements through env.step.
-  4. Sensor disc area: cell-discretised footprint at `sensor_radius = 1.5`
-     cells = 7.5 m falls inside the expected ±30 % of the continuous π·r²
-     value (tight tolerance is impossible at this radius — only 7-9 cells
-     intersect the disc, so quantisation dominates; large radii would be
-     tighter).
+  4. Sensor wedge area: cell-discretised forward-wedge footprint at
+     `sensor_range = 1.6` cells = 8 m and `sensor_hfov_rad = 54°` falls
+     inside the expected ±30 % of the continuous ½·r²·θ value, averaged
+     over 12 drone headings (alignment noise dominates at this small
+     wedge size; averaging over headings catches geometric regressions
+     without requiring a single-config assertion).
   5. Range to cutoff: drone flying at max_speed until battery cutoff covers
      `cruise_endurance × max_speed × m_per_cell` meters. Combines distance
      integration with the battery model — if either is wrong, this fails.
@@ -40,6 +41,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -79,7 +81,7 @@ def _build_one_drone_env(grid_size: int = 51) -> CoverageEnv:
         grid=grid,
         n_drones=1,
         sim=SimConfig(step_seconds=0.1, meters_per_cell=5.0),
-        drone=DroneConfig(sensor_radius=1.5, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=1.6, max_speed=1.5, max_accel=2.5),
     )
     env.reset(seed=0)
     return env
@@ -98,32 +100,41 @@ def test_tile_scale(env: CoverageEnv) -> bool:
     h, w = env.grid.shape
     cfg = env.drone_cfg
 
-    sensor_m = cfg.sensor_radius * mpc
+    sensor_range_m = cfg.sensor_range * mpc
+    sensor_hfov_deg = math.degrees(cfg.sensor_hfov_rad)
+    # Continuous wedge area in m²:  ½ · r² · θ  (θ in radians).
+    wedge_area_m2 = 0.5 * sensor_range_m ** 2 * cfg.sensor_hfov_rad
     max_speed_m_s = cfg.max_speed * mpc
     max_accel_m_s2 = cfg.max_accel * mpc
+    max_yaw_deg_s = math.degrees(cfg.max_yaw_rate)
     drone_radius_m = cfg.drone_radius * mpc
 
     print(f"      meters_per_cell     = {mpc} m/cell")
     print(f"      world (cells)       = {h} × {w}")
     print(f"      world (meters)      = {h * mpc:.0f} m × {w * mpc:.0f} m")
-    print(f"      sensor_radius       = {cfg.sensor_radius} cells = {sensor_m} m")
-    print(f"        sensor footprint  ≈ π·r² = {np.pi * sensor_m ** 2:.1f} m² (continuous)")
+    print(f"      sensor_range        = {cfg.sensor_range} cells = {sensor_range_m} m"
+          f"  (STEEReoCAM stereo depth ceiling)")
+    print(f"      sensor_hfov         = {sensor_hfov_deg:.1f}°  (STEEReoCAM lens, fixed forward)")
+    print(f"        wedge area        ≈ ½·r²·θ = {wedge_area_m2:.1f} m² (continuous)")
     print(f"      max_speed           = {cfg.max_speed} cells/s = {max_speed_m_s} m/s")
     print(f"      max_accel           = {cfg.max_accel} cells/s² = {max_accel_m_s2} m/s²"
           f"  ({max_accel_m_s2 / 9.81:.2f} g)")
+    print(f"      max_yaw_rate        = {cfg.max_yaw_rate} rad/s ≈ {max_yaw_deg_s:.0f}°/s")
     print(f"      drone_radius        = {cfg.drone_radius} cells = {drone_radius_m} m"
-          f"  (real F450 half-width ≈ 0.25 m)")
+          f"  (Hawk's Work F450 half-width ≈ 0.25 m)")
 
     all_ok = True
     all_ok &= _check("meters_per_cell == 5.0",                abs(mpc - 5.0) < 1e-9)
-    all_ok &= _check("sensor_radius   == 7.5 m",              abs(sensor_m - 7.5) < 1e-9,
-                     "F450 camera footprint at ~10 m altitude")
+    all_ok &= _check("sensor_range    == 8.0 m",              abs(sensor_range_m - 8.0) < 1e-9,
+                     "STEEReoCAM stereo depth ceiling (datasheet)")
+    all_ok &= _check("sensor_hfov     == 54°",                abs(sensor_hfov_deg - 54.0) < 1e-9,
+                     "STEEReoCAM lens datasheet §5")
     all_ok &= _check("max_speed       == 7.5 m/s",            abs(max_speed_m_s - 7.5) < 1e-9,
                      "realistic F450 cruise (manufacturer spec ≈ 15 m/s max forward)")
     all_ok &= _check("max_accel       ≈ 12.5 m/s² (~1.3 g)",  abs(max_accel_m_s2 - 12.5) < 1e-9,
                      "typical multirotor punch")
     all_ok &= _check("drone_radius    == 0.25 m",             abs(drone_radius_m - 0.25) < 1e-9,
-                     "F450 frame half-width")
+                     "Hawk's Work F450 frame half-width")
     return all_ok
 
 
@@ -140,16 +151,22 @@ def test_distance_traveled(env: CoverageEnv) -> bool:
     v_m_s = v_cells * mpc
 
     # Park drone in arena center moving in +x, verify no walls touched.
+    # Pin heading along velocity so the camera tracks the direction of motion
+    # (matches the demo policy and makes saved frames visually consistent).
     env.drones[0].pos = np.array([env.w / 2.0, env.h / 2.0])
     env.drones[0].vel = np.array([v_cells, 0.0])
+    env.drones[0].heading = 0.0   # facing +x = direction of motion
+    env.drones[0].yaw_rate = 0.0
     start_pos = env.drones[0].pos.copy()
 
     distance_cells_accum = 0.0
     for _ in range(n_steps):
         old_pos = env.drones[0].pos.copy()
-        # Re-pin velocity each step in case env.step's speed cap or wall logic
-        # touched it (it shouldn't here, but the pin is cheap insurance).
+        # Re-pin velocity + heading each step in case env.step's speed cap or
+        # wall logic touched them (shouldn't here, but the pin is cheap).
         env.drones[0].vel = np.array([v_cells, 0.0])
+        env.drones[0].heading = 0.0
+        env.drones[0].yaw_rate = 0.0
         env.step(np.zeros((1, 2)))
         distance_cells_accum += float(np.linalg.norm(env.drones[0].pos - old_pos))
 
@@ -177,50 +194,71 @@ def test_distance_traveled(env: CoverageEnv) -> bool:
 
 def test_sensor_footprint(env: CoverageEnv) -> bool:
     """
-    Cell-discretized sensor disc area should land within ±FOOTPRINT_TOLERANCE_PCT
-    of the analytical π·r² (m²). At r = 1.5 cells the disc only intersects 9
-    cells when centred on a cell center — quantization error is large but the
-    *units* (cell count × cell_area_m² ≈ π·r²·m²) must be self-consistent.
+    Cell-discretized forward-wedge area should land within
+    ±FOOTPRINT_TOLERANCE_PCT of the analytical ½·r²·θ (m²) area, when averaged
+    over multiple drone headings. At r = 1.6 cells (= 8 m / 5 m/cell) and θ
+    = 54° (HFOV), the wedge only intersects 1–3 cells per single configuration,
+    so we average over headings to make the test less alignment-sensitive
+    while still catching geometric regressions.
     """
-    print("\nTest 3: SENSOR FOOTPRINT AREA")
+    print("\nTest 3: SENSOR WEDGE FOOTPRINT")
     mpc = env.sim_cfg.meters_per_cell
-    r_cells = env.drone_cfg.sensor_radius
+    r_cells = env.drone_cfg.sensor_range
+    hfov_rad = env.drone_cfg.sensor_hfov_rad
     r_m = r_cells * mpc
     cell_area_m2 = mpc ** 2
 
-    # Place drone exactly on a cell center to remove alignment-induced noise.
-    env.drones[0].pos = np.array([env.w // 2 + 0.5, env.h // 2 + 0.5])
-    env.entry_count[:] = 0
-    env.prev_footprint[:] = False
-    env.first_visitor[:] = -1
-    env.drone_covered[:] = False
-    env.covered[:] = False
-    env.covered[env.grid == WALL] = True
-    env._update_coverage()
+    # Continuous wedge area in m²:  ½ · r² · θ. The model also always includes
+    # the drone's own cell as covered (the wedge apex is *at* the drone, so its
+    # geometric apex contributes 0 area but the drone's body occupies its cell);
+    # add `cell_area_m2` to make the expected match what the discrete model
+    # actually produces.
+    expected_m2 = 0.5 * r_m ** 2 * hfov_rad + cell_area_m2
 
-    cells_in_disc = int(env.drone_covered[0].sum())
-    actual_m2 = cells_in_disc * cell_area_m2
-    expected_m2 = np.pi * r_m ** 2
+    # Average cell count over a sweep of headings to integrate over discretization
+    # noise. 12 angles × 30° steps covers the wedge once around the compass.
+    heading_count = 12
+    cell_counts = []
+    for k in range(heading_count):
+        heading = -math.pi + (2 * math.pi) * k / heading_count
+        env.drones[0].pos = np.array([env.w // 2 + 0.5, env.h // 2 + 0.5])
+        env.drones[0].heading = heading
+        env.entry_count[:] = 0
+        env.prev_footprint[:] = False
+        env.first_visitor[:] = -1
+        env.drone_covered[:] = False
+        env.covered[:] = False
+        env.covered[env.grid == WALL] = True
+        env._update_coverage()
+        cell_counts.append(int(env.drone_covered[0].sum()))
 
-    print(f"      drone at cell center, r = {r_cells} cells = {r_m} m")
-    print(f"      cells in disc (discrete):  {cells_in_disc}")
-    print(f"      area (cells × {cell_area_m2:.0f} m²):     {actual_m2:.2f} m²")
-    print(f"      expected (π·r², continuous): {expected_m2:.2f} m²")
+    avg_cells = sum(cell_counts) / heading_count
+    actual_m2 = avg_cells * cell_area_m2
+
+    print(f"      drone at cell center; r = {r_cells} cells = {r_m} m, "
+          f"HFOV = {math.degrees(hfov_rad):.1f}°")
+    print(f"      cells in wedge (per heading): {cell_counts}")
+    print(f"      avg over {heading_count} headings:  {avg_cells:.2f} cells = "
+          f"{actual_m2:.2f} m²")
+    print(f"      expected (½·r²·θ + drone's own cell): {expected_m2:.2f} m²")
     delta_pct = abs(actual_m2 - expected_m2) / expected_m2 * 100
 
     all_ok = True
     all_ok &= _check(
-        "footprint area within ±30% of π·r² (discretization-dominated at r=1.5 cells)",
+        f"avg wedge area within ±{FOOTPRINT_TOLERANCE_PCT}% of ½·r²·θ "
+        "(discretization-dominated at r=1.6, hfov=54°)",
         delta_pct < FOOTPRINT_TOLERANCE_PCT,
         f"Δ = {delta_pct:.1f}% (tolerance < {FOOTPRINT_TOLERANCE_PCT}%)",
     )
-    # Sanity bound on cell count: at r=1.5 cells centered on a cell, the disc
-    # covers 9 cells (center + 4 axis-adjacent + 4 corner-adjacent). If we get
-    # something wildly different the footprint code is broken.
+    # Sanity bound on per-heading cell count. At r=1.6 cells with hfov=54°,
+    # the wedge from a cell-centered drone reaches 1.6 cells forward and is
+    # 1.63 cells wide at the far end. Discrete counts of 1–4 are typical
+    # depending on alignment.
+    in_bounds = all(1 <= c <= 5 for c in cell_counts)
     all_ok &= _check(
-        "cell count plausible (5 ≤ count ≤ 13 at r=1.5)",
-        5 <= cells_in_disc <= 13,
-        f"got {cells_in_disc}",
+        "every per-heading cell count in [1, 5]  (drone's own cell + 0–4 forward cells)",
+        in_bounds,
+        f"counts: {cell_counts}",
     )
     return all_ok
 
@@ -257,6 +295,8 @@ def test_range_to_cutoff(env: CoverageEnv) -> bool:
             break
         env.drones[0].pos = arena_center.copy()
         env.drones[0].vel = direction * target_v_cells
+        env.drones[0].heading = float(np.arctan2(direction[1], direction[0]))
+        env.drones[0].yaw_rate = 0.0
         old_pos = env.drones[0].pos.copy()
         env.step(np.zeros((1, 2)))
         # Accumulate the *actual* displacement env.step produced this iteration
@@ -384,6 +424,8 @@ def run_gui() -> None:
         env.drones[0].pos = arena_center + offset
         tangent = np.array([-offset[1], offset[0]]) / cruise_radius
         env.drones[0].vel = tangent * target_v_cells
+        env.drones[0].heading = float(np.arctan2(tangent[1], tangent[0]))
+        env.drones[0].yaw_rate = 0.0
         old_pos = env.drones[0].pos.copy()
         env.step(np.zeros((1, 2)))
         # Distance increment = how far env.step actually moved us. Next iter's

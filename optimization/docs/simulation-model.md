@@ -10,18 +10,23 @@ The 2D platform has just enough physics to expose the algorithmic question (does
 
 ## World scale
 
-`SimConfig.meters_per_cell` (default **5.0**) is the single knob that maps the cell-unit physics to the real world. The default 5 m/cell is derived from the **STEEReoCAM Nano** camera footprint (HFOV 54°, VFOV 49.5° — see [`f450-reference.md` → Camera](f450-reference.md#camera-steereocam-nano--used-to-derive-sensor_radius) for the datasheet). At altitude *h* the inscribed-disc footprint radius is `h × tan(VFOV/2) = h × 0.4607`. The default `sensor_radius = 1.5 cells × 5 m/cell = 7.5 m` corresponds to **h ≈ 16.3 m AGL**:
+`SimConfig.meters_per_cell` (default **5.0**) is the single knob that maps the cell-unit physics to the real world. At 5 m/cell:
 
 | Param | In cells | Real units (at 5 m/cell) | Real-world reference (Hawk's Work F450 build) |
 |---|---|---|---|
-| `sensor_radius` | 1.5 | 7.5 m | STEEReoCAM Nano inscribed disc (54° × 49.5° FOV) at ~16.3 m AGL |
+| `sensor_range` | 1.6 | 8.0 m | STEEReoCAM Nano stereo depth ceiling (datasheet) |
+| `sensor_hfov_rad` | — | 54° | STEEReoCAM Nano lens datasheet §5 |
 | `max_speed` (demo) | 1.5 | 7.5 m/s | realistic F450 cruise (sweet spot for translational lift) |
 | `max_accel` (demo) | 2.5 | 12.5 m/s² ≈ 1.3 g | typical multirotor punch |
-| `drone_radius` | 0.05 | 0.25 m | actual Hawk's Work F450 half-width (~0.225 m to motor mount) |
+| `max_yaw_rate` | — | 1.5 rad/s ≈ 86°/s | typical quadcopter yaw rate |
+| `max_yaw_accel` | — | 4.0 rad/s² | reaches max_yaw_rate in ~0.4 s |
+| `drone_radius` | 0.05 | 0.25 m | Hawk's Work F450 half-width |
 | 21×21 map | 21 | 105 × 105 m | small park / parking lot |
-| `flight_altitude_m` (informational) | — | 16.3 m AGL | camera footprint anchor; **above the 0.95–8 m stereo-depth ceiling** so coverage is visual-only at this altitude |
+| `flight_altitude_max_m` (informational) | — | 10 m AGL | operational ceiling; well within camera's 0.95–8 m depth range |
 
-To rescale for a different altitude (e.g., to fly within the 8 m depth-reliable range), use `environment.sensor_radius_from_altitude(altitude_m, shape="inscribed")` and adjust `meters_per_cell` + `sensor_radius` together. The energy model's `motion_coeff_w_per_v2 = 13` is calibrated against `meters_per_cell = 5`, so changing `meters_per_cell` requires recalibrating that constant via `k_cells = 0.51 × meters_per_cell²` (see [`battery-model.md`](battery-model.md)).
+The camera is **forward-facing and fixed** to the drone body — there is no gimbal. To redirect what the camera sees, the drone yaws (see *Drone state* below). For the simulator's coverage geometry that means the drone's footprint isn't a disc around its position; it's a **forward wedge** — apex at the drone, opening along the drone's heading, half-angle = HFOV/2 = 27°, range = `sensor_range` cells. See [`f450-reference.md` → Camera](f450-reference.md) for the lens datasheet and the geometric derivation.
+
+The energy model's `motion_coeff_w_per_v2 = 13` is calibrated against `meters_per_cell = 5`, so changing the cell scale requires recalibrating via `k_cells = 0.51 × meters_per_cell²` (see [`battery-model.md`](battery-model.md)).
 
 **Why this scale (and not "1 cell = 1 m")?** Coverage problems are defined by how much area the sensor can resolve per cell. Picking `meters_per_cell` from the sensor footprint keeps the per-cell discretization meaningful. Picking it from drone body size instead would make the map only 21×21 m and the drone slow at 1.35 m/s. Picking from max horizontal speed (15 m/s) gives a 210×210 m map with sensor implying ~20 m altitude. The middle option — sensor footprint — is what the default targets.
 
@@ -33,19 +38,25 @@ To rescale for a different altitude (e.g., to fly within the 8 m depth-reliable 
 
 Each call to `env.step(actions)` advances the world by `step_seconds`. The ordering is fixed — controllers can rely on this contract:
 
-1. **Receive actions.** The caller passes a NumPy array of shape `(n_drones, 2)` containing per-drone acceleration commands in cell-units / s² (any direction, any magnitude). Each drone's vector is rescaled so `|a| ≤ max_accel` while preserving direction. No clipping per-axis.
+1. **Receive actions.** The caller passes a NumPy array of shape `(n_drones, 3)` containing per-drone commands in cell-units / s² and rad/s²:
+   - `actions[i, 0:2]` = linear acceleration `(ax, ay)` in **world frame**. The 2D vector is magnitude-rescaled so `|a| ≤ max_accel` (direction preserved).
+   - `actions[i, 2]` = yaw acceleration `α_yaw` in rad/s², scalar-clipped to `±max_yaw_accel`.
+   Linear and yaw commands are **independent** — real quadcopters yaw via differential motor torque, no body tilt, so a drone can translate while yawing.
+   For backwards compatibility, controllers that emit shape `(n_drones, 2)` are also accepted (treated as `α_yaw = 0`).
 
 2. **For each drone, in index order:**
 
-   a. **Integrate velocity.** `v_new = v_old + a · step_seconds`. If `|v_new| > max_speed`, rescale to the speed cap (direction preserved). [Explicit Euler integration][src-euler-wiki] — see also [Gaffer On Games' "Integration Basics"][src-euler-game] for the same `position += velocity · dt` / `velocity += acceleration · dt` form used in game physics.
+   a. **Integrate linear velocity.** `v_new = v_old + a · step_seconds`. If `|v_new| > max_speed`, rescale to the speed cap (direction preserved). [Explicit Euler integration][src-euler-wiki] — see also [Gaffer On Games' "Integration Basics"][src-euler-game] for the same `position += velocity · dt` / `velocity += acceleration · dt` form used in game physics.
 
    b. **Propose a position.** `p_new = p_old + v_new · step_seconds`. Uses the *new* velocity, not a midpoint.
 
    c. **Resolve walls** axis-by-axis (X first, then Y with the accepted X). Either axis may have its velocity component zeroed if the move would put the drone-radius footprint into a wall or off-grid (see *Wall collision*).
 
-   d. **Drain battery.** `P = P_hover + k · |v_new|²` watts; subtract `P · step_seconds` joules from `battery_j`, clamped at zero. The drain uses the *post-collision* velocity so a fully blocked drone pays only `P_hover · step_seconds`. See [battery-model.md](battery-model.md) for the equations and their derivation.
+   d. **Integrate yaw.** `yaw_rate_new = yaw_rate_old + α_yaw · dt`, clipped to `±max_yaw_rate`. Then `heading_new = heading_old + yaw_rate_new · dt`, wrapped to `[-π, π]`. Yaw is independent of translation in this model — real quadcopters can yaw while hovering or while translating.
 
-3. **Update coverage.** After all drones have moved, every free cell within `sensor_radius` of any drone center is marked covered. The mask is cumulative — once covered, always covered.
+   e. **Drain battery.** `P = P_hover + k · |v_new|²` watts; subtract `P · step_seconds` joules from `battery_j`, clamped at zero. The drain uses the *post-collision* velocity so a fully blocked drone pays only `P_hover · step_seconds`. **Yaw doesn't enter the energy model** in this version — see [battery-model.md](battery-model.md) for the rationale.
+
+3. **Update coverage.** After all drones have moved (and yawed), every free cell inside *any* drone's forward wedge is marked covered. The wedge is anchored at the drone's position, opens along its heading, has half-angle = `sensor_hfov_rad/2`, and reaches `sensor_range` cells radially. The drone's own cell is always included (the wedge apex is *at* the drone). The mask is cumulative — once covered, always covered.
 
 4. **Advance clock.** `time_seconds += step_seconds`; `step_count += 1`.
 
@@ -57,7 +68,7 @@ What the caller can rely on:
 
 ## Drone dynamics
 
-Each drone is a 2D point mass with state `(pos, vel)`. The full integration sequence is described in *Per-step flow* above; this subsection just notes the design choices and defaults.
+Each drone has state `(pos, vel, heading, yaw_rate)` — a 2D point mass plus an orientation around the vertical axis. The full integration sequence is described in *Per-step flow* above; this subsection just notes the design choices and defaults.
 
 Configuration is split across two dataclasses so the names match what the values mean:
 
@@ -65,9 +76,13 @@ Configuration is split across two dataclasses so the names match what the values
 |---|---|---|---|---|
 | `step_seconds` (`dt`) | `SimConfig` | 0.1 s | (kept) | Sim timestep — environment-level. |
 | `meters_per_cell` | `SimConfig` | 5.0 m | (kept) | World-scale factor; see *World scale* above. |
-| `sensor_radius` | `DroneConfig` | 1.5 cells (= 7.5 m) | (kept) | Disc sensor radius. |
-| `max_speed` | `DroneConfig` | 1.0 cells/s (= 5 m/s) | 1.5 (= 7.5 m/s) | Magnitude cap, not per-axis. |
-| `max_accel` | `DroneConfig` | 2.0 cells/s² (= 10 m/s²) | 2.5 (= 12.5 m/s²) | Magnitude cap, not per-axis. |
+| `flight_altitude_max_m` | `SimConfig` | 10.0 m | (kept) | Operational ceiling; informational only. |
+| `sensor_range` | `DroneConfig` | 1.6 cells (= 8 m) | (kept) | Wedge radial range; STEEReoCAM stereo depth ceiling. |
+| `sensor_hfov_rad` | `DroneConfig` | 54° | (kept) | Wedge horizontal FOV; STEEReoCAM lens datasheet. |
+| `max_speed` | `DroneConfig` | 1.0 cells/s (= 5 m/s) | 1.5 (= 7.5 m/s) | Magnitude cap on `|vel|`, not per-axis. |
+| `max_accel` | `DroneConfig` | 2.0 cells/s² (= 10 m/s²) | 2.5 (= 12.5 m/s²) | Magnitude cap on `|a|`, not per-axis. |
+| `max_yaw_rate` | `DroneConfig` | 1.5 rad/s ≈ 86°/s | (kept) | Scalar cap on `|yaw_rate|`. |
+| `max_yaw_accel` | `DroneConfig` | 4.0 rad/s² | (kept) | Scalar cap on `|α_yaw|`. |
 | `drone_radius` | `DroneConfig` | 0.05 cells (= 0.25 m) | (kept) | Used by wall collision only. |
 | `mass_kg` | `DroneConfig` | 1.9 kg | (kept) | F450 + payload; informational, see *World scale*. |
 
@@ -89,14 +104,26 @@ This avoids the common point-mass gotcha where a drone moving diagonally into a 
 
 ## Coverage and sensing
 
-Each drone has an omnidirectional disc sensor of `sensor_radius` cells (default 1.5). After every step the coverage mask updates as:
+Each drone's camera is a fixed forward-facing stereo unit (STEEReoCAM Nano — see [`f450-reference.md`](f450-reference.md) for specs and the geometric derivation). The coverage footprint is a **forward wedge in the XY plane**: apex at the drone's position, opening along the drone's heading, half-angle = `sensor_hfov_rad / 2`, radial range = `sensor_range` cells. To redirect what the camera sees, the drone yaws.
+
+After every step the coverage mask updates as:
 
 ```
 for each drone d:
-    for each cell (cx, cy) with center (cx + 0.5, cy + 0.5):
-        if (cx + 0.5 − d.pos.x)² + (cy + 0.5 − d.pos.y)² ≤ sensor_radius²:
+    h = (cos(d.heading), sin(d.heading))   # drone's forward unit vector
+    for each cell (cx, cy) with center (mx, my) = (cx + 0.5, cy + 0.5):
+        dx, dy = mx − d.pos.x, my − d.pos.y
+        # In radial range AND inside the angular wedge?
+        if (dx² + dy² ≤ sensor_range²)  AND
+           (dx·h.x + dy·h.y > 0)  AND
+           ((dx·h.x + dy·h.y)² ≥ cos²(hfov/2) · (dx² + dy²)):
             covered[cy, cx] = True
+    # Always include the drone's own cell — wedge apex is *at* the drone,
+    # angular test is degenerate when (dx, dy) = (0, 0).
+    covered[int(d.pos.y), int(d.pos.x)] = True
 ```
+
+The angular test is a `cos²` form so we avoid a `sqrt`; it's equivalent to `cos(angle_between(d.heading, cell_direction)) ≥ cos(hfov/2)`. Drones that yaw in place see the wedge sweep across new cells without translation; drones that translate without yawing see the wedge slide forward along the heading direction.
 
 Wall cells are pre-marked covered at `reset()`, so the headline metric divides only by coverable cells:
 
@@ -116,7 +143,7 @@ Every drone keeps its own boolean mask `env.drone_covered[i]` of free cells it h
 
 ### Visit-count metrics (entry-event)
 
-The above are *set-based* — they answer "is this cell covered?" not "how many times?". Visit-count metrics use `env.entry_count[i]`, incremented on every `outside-disc → inside-disc` transition, so revisits *are* tallied. Hovering doesn't inflate counts (cells stay inside the disc until the drone leaves and returns).
+The above are *set-based* — they answer "is this cell covered?" not "how many times?". Visit-count metrics use `env.entry_count[i]`, incremented on every `outside-wedge → inside-wedge` transition, so revisits *are* tallied. Hovering with constant heading doesn't inflate counts (cells stay inside the wedge until the drone moves or yaws away). **Yawing in place does generate new entries** as the wedge sweeps across cells that weren't in it last step — that's correct: the drone scanned new ground.
 
 - `env.total_visits(i)` — every cell-entry event by drone *i*.
 - `env.unique_cells_visited(i)` — distinct free cells drone *i* ever entered.

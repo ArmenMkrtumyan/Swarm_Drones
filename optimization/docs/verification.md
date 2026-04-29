@@ -17,7 +17,7 @@ python verification_scripts/test_overlap.py            # headless: writes 4 PNGs
 python verification_scripts/test_overlap.py --gui      # live animation: watch self↺ and wasted visits tick up
 ```
 
-Deterministic 2-drone scenario in a 25×5 corridor with `sensor_radius = 0.5` (one cell per visit, no overlap noise). Three phases:
+Deterministic 2-drone scenario in a 25×5 corridor with `sensor_range = 0.01` (degenerate wedge — only the drone's own-cell special case fires, so coverage = exactly the drone's current cell regardless of heading; gives clean one-cell-per-position semantics for hand-computable expectations). Three phases:
 
 - **Phase A**: D1 walks east, paints row y=2.
 - **Phase B**: D2 enters D1's territory and walks east through it (pure cross-overlap).
