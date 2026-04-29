@@ -41,7 +41,7 @@ from constants import (
 )
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import load_map, random_obstacles, recursive_backtracker
-from visualize import animate, render_frame
+from visualize import animate, init_drone_palette, render_frame
 
 
 def _output_prefix(save_arg: str | None) -> str:
@@ -208,6 +208,9 @@ def main() -> None:
         drone=DroneConfig(sensor_radius=1.5, max_speed=1.5, max_accel=2.5),
     )
     env.reset(seed=args.seed)
+    # Random palette rotation each run (seed=None = OS entropy). Color choice
+    # only affects rendering — env.step() doesn't touch it.
+    init_drone_palette(args.drones, seed=None)
 
     mpc = env.sim_cfg.meters_per_cell
     h, w = grid.shape
@@ -223,9 +226,16 @@ def main() -> None:
 
     b0 = env.battery_state(0)
     print()
-    print("=== Battery (Hawks F450 reference: 11.1V 4200mAh) ===")
-    print(f"  starting (all drones):  {b0['voltage_v_nominal']:.1f}V  {b0['capacity_mah']:.0f} mAh  "
-          f"({b0['initial_energy_j']:.0f} J)  cutoff at {b0['min_voltage_v']:.1f}V")
+    print("=== Battery (Hawk's Work F450 reference: 11.1V 4200mAh 3S) ===")
+    # Two voltages live on the same pack: nominal (sales-label, used for the
+    # E = V·mAh·3.6 energy calc) and full-charge (what a multimeter reads off
+    # the charger). 3S LiPo: 11.1 V nominal, 12.6 V at 100%, 9.0 V at 0%.
+    print(f"  pack: {b0['voltage_v_nominal']:.1f}V nominal  "
+          f"(full {env.battery_cfg.cell_full_voltage_v * env.battery_cfg.n_cells:.1f}V → "
+          f"empty {env.battery_cfg.cell_dead_voltage_v * env.battery_cfg.n_cells:.1f}V)  "
+          f"{b0['capacity_mah']:.0f} mAh  ({b0['initial_energy_j']:.0f} J)")
+    print(f"  starting voltage (all drones): {b0['voltage_v_current']:.2f}V (full charge)  "
+          f"cutoff: {b0['min_voltage_v']:.1f}V")
 
     if args.gui:
         gif_path = None

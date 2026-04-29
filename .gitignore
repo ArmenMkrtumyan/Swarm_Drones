@@ -2,3 +2,4 @@ my_drone_simulation/.drone_env
 optimization/.optim_env
 optimization/outputs/
 optimization/CLAUDE.md
+**/__pycache__/

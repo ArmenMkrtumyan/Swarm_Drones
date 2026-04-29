@@ -32,14 +32,30 @@ MAPS_DIR = OUTPUTS_DIR / "maps"
 # ---------------------------------------------------------------------------
 WALL_COLOR = "#444"
 FREE_COLOR = "white"
-DRONE_COLOR = "red"
 
-COVERED_OVERLAY_RGBA = (0.30, 0.75, 0.30, 0.45)
 DISCONNECTED_OVERLAY_RGBA = (1.0, 0.0, 0.0, 0.55)
 BREACH_OVERLAY_RGBA = (1.0, 0.55, 0.0, 0.65)
 
-SENSOR_CIRCLE_COLOR = "red"
 SENSOR_CIRCLE_ALPHA = 0.4
+
+# Per-drone palette generation (visualize.init_drone_palette / drone_color).
+# Hues are placed at 1/n spacing on the HSV wheel and the whole wheel is
+# rotated by a random offset, so every drone is maximally far from every other
+# in hue, and different runs draw different specific colors.
+DRONE_PALETTE_SATURATION = 0.72   # vivid without being neon
+DRONE_PALETTE_VALUE = 0.88        # bright enough to read as a paint overlay
+# Mid-gray for depleted drones. Saturation 0 keeps it away from every palette
+# color (which all have S = 0.72), so a dead drone is unambiguous regardless
+# of which random rotation the run drew.
+DEPLETED_DRONE_RGB = (0.5, 0.5, 0.5)
+
+# Translucent paint for "first-visitor wins" cell coloring.
+FIRST_VISITOR_ALPHA = 0.45
+
+# Dark translucent overlay stacked on top of cells visited by ≥ 2 distinct
+# drones. Combines with the first-visitor color to produce a darker tint that
+# reads as "shared territory" without obscuring whose color it originally was.
+OVERLAP_OVERLAY_RGBA = (0.0, 0.0, 0.0, 0.30)
 
 DRONE_LABEL_FONTSIZE = 8
 BATTERY_PANEL_FONTSIZE = 8

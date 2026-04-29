@@ -11,6 +11,7 @@ can later be ported to Isaac Sim with minimal changes:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -19,22 +20,88 @@ import numpy as np
 from maze import FREE, WALL, random_free_positions
 
 
+# STEEReoCAM Nano camera spec (per `optimization/docs/camera_specs/`):
+#     HFOV = 54°, VFOV = 49.5°, DFOV = 77.9°
+#     Stereo depth range = 0.95 – 8 m (beyond 8 m, depth quality degrades)
+#     Sensor: 2× OV2311, 100 mm baseline, 1600×1300 per eye, 30 fps stereo
+# Used by sensor_radius_from_altitude() below; if you change the camera,
+# update these constants in lock-step with the docs.
+STEEREOCAM_HFOV_DEG = 54.0
+STEEREOCAM_VFOV_DEG = 49.5
+STEEREOCAM_DEPTH_MIN_M = 0.95
+STEEREOCAM_DEPTH_MAX_M = 8.0
+
+
+def sensor_radius_from_altitude(
+    altitude_m: float,
+    hfov_deg: float = STEEREOCAM_HFOV_DEG,
+    vfov_deg: float = STEEREOCAM_VFOV_DEG,
+    shape: str = "inscribed",
+) -> float:
+    """
+    Convert a real-world camera FOV + altitude into a disc-equivalent
+    sensor_radius in meters. The camera footprint is rectangular; we
+    approximate it with a disc using one of three conventions:
+
+        - "inscribed": disc fits inside the rectangle. CONSERVATIVE — every
+          cell inside the disc is guaranteed inside the camera's actual view.
+          Radius = altitude × min(tan(HFOV/2), tan(VFOV/2)).
+        - "equivalent_area": disc has the same area as the rectangle. A
+          balanced choice for "how much ground is in view per snapshot."
+          Radius = altitude × √(4 · tan(HFOV/2) · tan(VFOV/2) / π).
+        - "diagonal": disc covers the rectangle's corners. LIBERAL — some
+          cells inside the disc are outside the actual FOV (in the corners).
+          Radius = altitude × √(tan²(HFOV/2) + tan²(VFOV/2)).
+
+    Defaults match the project's STEEReoCAM Nano (see docs/camera_specs/
+    for the datasheet). Pass altitude in meters, get radius in meters; the
+    caller is responsible for dividing by `meters_per_cell` to get cells.
+
+    Tip: real F450 swarm coverage missions typically run at 5–16 m AGL.
+    Beyond ~8 m the stereo depth quality drops below the camera spec, but
+    visual coverage (which is all our model tracks) still works.
+    """
+    hw = altitude_m * math.tan(math.radians(hfov_deg / 2))
+    hh = altitude_m * math.tan(math.radians(vfov_deg / 2))
+    if shape == "inscribed":
+        return min(hw, hh)
+    if shape == "equivalent_area":
+        return math.sqrt(4 * hw * hh / math.pi)
+    if shape == "diagonal":
+        return math.hypot(hw, hh)
+    raise ValueError(f"unknown shape {shape!r}; "
+                     f"expected one of: inscribed, equivalent_area, diagonal")
+
+
 @dataclass
 class SimConfig:
     """
     Environment-level settings (apply to the whole sim, not any one drone).
 
     `meters_per_cell` is the world-scale knob: how many real meters one grid
-    cell represents. Default 5.0 is derived from sensor footprint:
-        sensor_radius = 1.5 cells × 5 m/cell = 7.5 m  (camera at ~10 m altitude)
+    cell represents. Default 5.0 is derived from the STEEReoCAM Nano camera
+    footprint at the implicit `flight_altitude_m` below (inscribed-disc
+    convention). The defaults reproduce:
+
+        sensor_radius = 1.5 cells × 5 m/cell = 7.5 m
+            ≈ inscribed disc of STEEReoCAM (HFOV 54°, VFOV 49.5°)
+              at h = 7.5 / tan(49.5°/2) ≈ 16.3 m AGL
         max_speed     = 1.5 cells/s × 5      = 7.5 m/s  (realistic F450 cruise)
         max_accel     = 2.5 cells/s² × 5     = 12.5 m/s² ≈ 1.3 g
-        21×21 map                           = 105 m × 105 m
-    Change this to model a different real-world area without re-tuning the
-    cell-unit dynamics. See README → "World scale" for trade-offs.
+        21×21 map                            = 105 m × 105 m
+
+    To rescale for a different altitude, use sensor_radius_from_altitude()
+    above and adjust SimConfig.meters_per_cell + DroneConfig.sensor_radius
+    in lock-step. Note that 16 m AGL is above the STEEReoCAM's 0.95–8 m
+    stereo-depth ceiling — the camera sees that far visually, but stereo
+    depth degrades. For depth-reliable coverage, fly at h ≤ 8 m.
     """
     step_seconds: float = 0.1       # how much sim time one env.step() advances
     meters_per_cell: float = 5.0    # cell ↔ meter conversion (see class docstring)
+    flight_altitude_m: float = 16.3 # informational: AGL altitude assumed by sensor_radius
+                                    # default. NOT used in physics — sensor_radius is
+                                    # what the model uses. Stored here so it's discoverable
+                                    # in the panel / printouts.
 
 
 @dataclass
@@ -43,20 +110,34 @@ class DroneConfig:
     Per-drone vehicle properties. The current `CoverageEnv` applies one shared
     `DroneConfig` to every drone (homogeneous fleet). To support heterogeneous
     swarms later, accept a list of `DroneConfig` instead.
+
+    `sensor_radius` is the disc-equivalent ground footprint of the downward
+    camera (STEEReoCAM Nano on this drone — see docs/f450-reference.md and
+    docs/camera_specs/ for the datasheet). At the default 5 m/cell + 1.5 cells,
+    the footprint disc is 7.5 m, derived from the inscribed disc of the
+    camera's 54° × 49.5° rectangle at ~16 m AGL. To rescale for different
+    altitudes use environment.sensor_radius_from_altitude().
     """
-    sensor_radius: float = 1.5      # cells (≈ 7.5 m at meters_per_cell=5)
+    sensor_radius: float = 1.5      # cells (= 7.5 m at meters_per_cell=5; STEEReoCAM
+                                    # inscribed disc at ~16 m AGL — see SimConfig)
     max_speed: float = 1.0          # cells / second (≈ 5 m/s at meters_per_cell=5)
     max_accel: float = 2.0          # cells / second^2 (≈ 10 m/s² at meters_per_cell=5)
-    drone_radius: float = 0.05      # cells (≈ 0.25 m: real F450 half-width); collision only
-    mass_kg: float = 1.9            # F450 + Jetson + camera + 3S LiPo. Informational
-                                    # only — power model uses back-calculated hover_power_w
-                                    # rather than deriving from m·g and rotor area.
+    drone_radius: float = 0.05      # cells (≈ 0.25 m: Hawk's Work F450 half-width); collision only
+    mass_kg: float = 1.9            # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
+                                    # Informational only — power model uses back-calculated
+                                    # hover_power_w rather than deriving from m·g and rotor area.
 
 
 @dataclass
 class BatteryConfig:
     """
-    Hawks F450 reference: 11.1V 3S LiPo, 4200 mAh, ~165 W hover draw.
+    Hawk's Work F450 reference build (https://www.hawks-work.com/pages/f450-drone):
+        - Frame: F450 450 mm wheelbase (clone of DJI Flame Wheel F450)
+        - Motors: 4× A2212 920 KV
+        - ESCs: 4× 20 A brushless
+        - Props: 9450 self-tightening
+        - Battery: 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60
+        - Hover power: ~165 W (back-calculated from F450-class flight times)
 
     Per-step instantaneous power:  P = hover_power_w + motion_coeff_w_per_v2 * |v|^2
     Cutoff: drone is "depleted" once current_voltage_v(battery_j) <= min_voltage_v.
@@ -150,6 +231,16 @@ class CoverageEnv:
         # drone's fraction is over coverable cells only. Sum across drones can
         # exceed the global mask — the gap measures overlap.
         self.drone_covered = np.zeros((n_drones, self.h, self.w), dtype=bool)
+        # Entry-count state. `entry_count[i, y, x]` = number of times drone i has
+        # transitioned from outside-its-disc to inside-its-disc on cell (y, x).
+        # `prev_footprint[i]` is last step's disc, used to diff for new entries.
+        # Hovering does not inflate counts (cells stay inside the disc, no transition).
+        self.entry_count = np.zeros((n_drones, self.h, self.w), dtype=np.int32)
+        self.prev_footprint = np.zeros((n_drones, self.h, self.w), dtype=bool)
+        # `first_visitor[y, x]` = drone index that first claimed the cell, -1 if
+        # none yet. Ties on the same step go to the lower index (deterministic).
+        # Used by the renderer to paint per-drone territory in distinct colors.
+        self.first_visitor = np.full((self.h, self.w), -1, dtype=np.int8)
 
         self.drones: list[Drone] = []
         self.time_seconds: float = 0.0
@@ -164,6 +255,9 @@ class CoverageEnv:
         self.covered[:] = False
         self.covered[self.grid == WALL] = True
         self.drone_covered[:] = False
+        self.entry_count[:] = 0
+        self.prev_footprint[:] = False
+        self.first_visitor[:] = -1
         self.time_seconds = 0.0
         self.step_count = 0
         self._update_coverage()
@@ -272,6 +366,18 @@ class CoverageEnv:
             dx = xs - drone.pos[0]
             dy = ys - drone.pos[1]
             footprint = ((dx * dx + dy * dy) <= r * r) & free_mask
+
+            # Entry events: cells newly inside the disc since last step. Hovering
+            # generates 0 entries (cells stay inside the disc → no transition).
+            entries = footprint & ~self.prev_footprint[i]
+            self.entry_count[i] += entries.astype(np.int32)
+
+            # First-visitor claim: lowest drone index wins ties on the same step
+            # because we iterate i = 0..n-1 and only fill cells still unclaimed.
+            unclaimed = (self.first_visitor == -1) & entries
+            self.first_visitor[unclaimed] = i
+
+            self.prev_footprint[i] = footprint
             self.covered |= footprint
             self.drone_covered[i] |= footprint
         self.covered[self.grid == WALL] = True
@@ -335,6 +441,57 @@ class CoverageEnv:
         cell_area_m2 = self.sim_cfg.meters_per_cell ** 2
         multi_covered = int((self.drone_covered.sum(axis=0) >= 2).sum())
         return multi_covered * cell_area_m2
+
+    # -------- entry-count metrics (visit-level, not just set membership) --------
+
+    def total_visits(self, drone_idx: int) -> int:
+        """
+        Total cell-entry events by this drone over the whole run. A "visit" is
+        one transition from outside-disc to inside-disc for a single free cell.
+        Hovering does not inflate this — cells already in the disc don't count
+        again until the drone leaves and returns.
+        """
+        return int(self.entry_count[drone_idx].sum())
+
+    def unique_cells_visited(self, drone_idx: int) -> int:
+        """Distinct free cells this drone has ever entered."""
+        return int((self.entry_count[drone_idx] > 0).sum())
+
+    def self_revisits(self, drone_idx: int) -> int:
+        """
+        Times this drone re-entered a cell it had already visited. Equals
+        ``total_visits(i) - unique_cells_visited(i)`` — every entry past the
+        first one for a given cell is a self-revisit.
+        """
+        return self.total_visits(drone_idx) - self.unique_cells_visited(drone_idx)
+
+    def cross_overlap_visits(self, drone_idx: int) -> int:
+        """
+        This drone's entries into cells some OTHER drone has visited at least
+        once during the run. Symmetric across the full episode (we don't ask
+        who entered first); each entry event by drone i into a cell that any
+        other drone has touched contributes 1.
+
+        Counted per-entry, not per-cell: if drone i enters a shared cell three
+        times, that's 3 cross-overlap visits, not 1.
+        """
+        other_visited = np.zeros((self.h, self.w), dtype=bool)
+        for j in range(self.n_drones):
+            if j != drone_idx:
+                other_visited |= self.entry_count[j] > 0
+        return int(self.entry_count[drone_idx, other_visited].sum())
+
+    def wasted_visits_total(self) -> int:
+        """
+        Swarm-wide count of entries that were not unique discoveries: every
+        entry past the first one for any given cell, summed across all drones.
+        Equals ``Σᵢ total_visits(i) − (free cells visited by anyone)``. Captures
+        both self-revisits and cross-drone re-coverage in a single number.
+        """
+        total_entries = int(self.entry_count.sum())
+        free_mask = self.grid == FREE
+        unique_global = int((self.covered & free_mask).sum())
+        return total_entries - unique_global
 
     # -------- observations (for future RL/PF use) --------
 
