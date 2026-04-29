@@ -29,11 +29,13 @@ import time
 
 MASTER = "udpin:localhost:14551"
 TAKEOFF_ALT = 3.0
+HOLD_SECONDS = 15.0         # how long to actively hold position after reaching altitude
+HOLD_SEND_HZ = 5            # position-target refresh rate (GUIDED requires regular updates)
 
 # Bench-test fallback
 FORCE_ARM_FALLBACK = True
-BENCH_THROTTLE = 1200
-BENCH_SECONDS = 3.0
+BENCH_THROTTLE = 1700   # 1200 was below min motor spin -> drone won't lift; 1700 gives real thrust
+BENCH_SECONDS = 5.0
 
 ACK_RESULTS = {
     0: "ACCEPTED",
@@ -102,6 +104,105 @@ def wait_armed(master, timeout=5.0):
     return False
 
 
+EKF_POS_HORIZ_ABS = 16   # EKF_STATUS_INFO_FLAGS: absolute horizontal position OK
+EKF_POS_VERT_ABS  = 32   #                        absolute vertical position OK
+EKF_PRED_POS_HORIZ_ABS = 512
+EKF_GPS_GLITCHING = 32768
+
+# Human-readable decoding for debug output
+_EKF_FLAG_NAMES = [
+    (1,     "ATTITUDE"),
+    (2,     "VEL_HORIZ"),
+    (4,     "VEL_VERT"),
+    (8,     "POS_HORIZ_REL"),
+    (16,    "POS_HORIZ_ABS"),
+    (32,    "POS_VERT_ABS"),
+    (64,    "POS_VERT_AGL"),
+    (128,   "CONST_POS_MODE"),
+    (256,   "PRED_POS_HORIZ_REL"),
+    (512,   "PRED_POS_HORIZ_ABS"),
+    (1024,  "UNINITIALIZED"),
+    (32768, "GPS_GLITCHING"),
+]
+
+
+def _decode_ekf_flags(flags):
+    return [name for bit, name in _EKF_FLAG_NAMES if flags & bit]
+
+
+GPS_FIX_NAMES = {0: "NO_GPS", 1: "NO_FIX", 2: "2D", 3: "3D", 4: "DGPS", 5: "RTK_FLOAT", 6: "RTK_FIXED"}
+
+
+def _request_message_interval(master, message_id, hz):
+    """Tell ArduPilot to stream a given message ID at `hz` Hz."""
+    interval_us = int(1_000_000 / hz)
+    master.mav.command_long_send(
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+        0,
+        message_id,
+        interval_us,
+        0, 0, 0, 0, 0,
+    )
+
+
+def wait_for_ekf_ready(master, timeout=30.0, poll_hz=2.0):
+    """Poll EKF_STATUS_REPORT.flags until bit POS_HORIZ_ABS is set, which is
+    what GUIDED's "Need Position Estimate" gate checks. Also polls GPS_RAW_INT
+    so we can see whether SITL's simulated GPS is even reporting a fix — if
+    the EKF stays in CONST_POS_MODE, that almost always means GPS fusion is
+    being blocked by one of the EK3_GPS_CHECK bits.
+    """
+    _request_message_interval(master, 193, poll_hz)  # EKF_STATUS_REPORT
+    _request_message_interval(master, 24, 1.0)       # GPS_RAW_INT (1 Hz is plenty)
+
+    print(f"Waiting up to {timeout:.1f}s for EKF3 POS_HORIZ_ABS...")
+    end = time.time() + timeout
+    last_print = 0.0
+    last_flags = None
+    last_gps = None  # (fix_type, sats)
+    while time.time() < end:
+        msg = master.recv_match(type=["EKF_STATUS_REPORT", "GPS_RAW_INT"],
+                                blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        mtype = msg.get_type()
+        now = time.time()
+        if mtype == "GPS_RAW_INT":
+            last_gps = (int(msg.fix_type), int(msg.satellites_visible))
+            continue
+        # EKF_STATUS_REPORT
+        flags = int(msg.flags)
+        if flags != last_flags or now - last_print >= 2.0:
+            names = _decode_ekf_flags(flags)
+            gps_str = ""
+            if last_gps is not None:
+                fix, sats = last_gps
+                gps_str = f"  gps={GPS_FIX_NAMES.get(fix, fix)}/sats={sats}"
+            print(f"  [ekf] flags=0x{flags:04x}  active={names}{gps_str}")
+            last_print = now
+            last_flags = flags
+        if flags & EKF_POS_HORIZ_ABS and not (flags & EKF_GPS_GLITCHING):
+            print(f"  [ekf] POS_HORIZ_ABS set — ready to arm")
+            return True
+    # Timed out. Report last state for diagnosis.
+    if last_flags is None:
+        print("  [ekf] no EKF_STATUS_REPORT received — check SET_MESSAGE_INTERVAL support")
+        return False
+    missing = []
+    if not (last_flags & EKF_POS_HORIZ_ABS):
+        missing.append("POS_HORIZ_ABS")
+    if last_flags & 128:  # CONST_POS_MODE
+        missing.append("(stuck in CONST_POS_MODE — GPS fusion blocked)")
+    gps_str = ""
+    if last_gps is not None:
+        fix, sats = last_gps
+        gps_str = f"  gps={GPS_FIX_NAMES.get(fix, fix)}/sats={sats}"
+    print(f"  [ekf] timed out; last flags=0x{last_flags:04x}  missing={missing}{gps_str}")
+    return False
+
+
 def set_param(master, name, value):
     print(f"Setting param {name} = {value}")
     master.mav.param_set_send(
@@ -165,6 +266,107 @@ def takeoff(master, alt):
         print("Takeoff ACK: none")
 
 
+def send_position_target(master, x, y, z, yaw=0.0):
+    """Position-only GUIDED target in LOCAL_NED. z negative = up."""
+    # type_mask: ignore velocity (bits 3-5), accel (6-8), force (9), yaw (10), yaw_rate (11).
+    # Bits 0-2 (position) = 0 (use). = 0b0000111111111000 = 4088
+    type_mask = 0b0000111111111000
+    master.mav.set_position_target_local_ned_send(
+        0,
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+        type_mask,
+        x, y, z,
+        0, 0, 0,
+        0, 0, 0,
+        yaw, 0.0,
+    )
+
+
+def takeoff_and_hold(master, alt, hold_s=15.0, climb_timeout=20.0, rate_hz=5):
+    """Fire NAV_TAKEOFF, then stream position targets continuously from t=0.
+
+    The stream is what keeps GUIDED alive: if we wait for altitude before starting
+    the stream, the 3-second GUID_TIMEOUT expires during the climb and ArduPilot
+    drops throttle. Streaming from the start means GUIDED never idles.
+
+    Returns True if target altitude was reached, False on timeout.
+    """
+    takeoff(master, alt)
+
+    print(f"Streaming target (0, 0, {-alt:.1f}) NED @ {rate_hz}Hz "
+          f"throughout climb + {hold_s:.1f}s hold...")
+    interval = 1.0 / rate_hz
+    start = time.time()
+    last_report = 0.0
+    reached = False
+    reached_t = None
+
+    while True:
+        now = time.time()
+        elapsed = now - start
+
+        if reached and (now - reached_t) >= hold_s:
+            print(f"Hold complete ({hold_s:.1f}s).")
+            return True
+        if not reached and elapsed >= climb_timeout:
+            print(f"Climb timeout after {climb_timeout:.0f}s — target alt never reached.")
+            return False
+
+        # Stream the position target (this is the critical part)
+        send_position_target(master, 0.0, 0.0, -alt)
+
+        # Drain any telemetry that's arrived since last iteration
+        for _ in range(20):
+            msg = master.recv_match(blocking=False)
+            if msg is None:
+                break
+            mtype = msg.get_type()
+            if mtype == "GLOBAL_POSITION_INT":
+                alt_now = msg.relative_alt / 1000.0
+                if not reached and alt_now >= 0.95 * alt:
+                    reached = True
+                    reached_t = now
+                    print(f"Reached target alt ({alt_now:.2f}m); holding for {hold_s:.1f}s...")
+                if now - last_report >= 1.0:
+                    phase = "hold" if reached else "climb"
+                    print(f"[{phase}] t={elapsed:5.1f}s rel_alt={alt_now:.2f}m "
+                          f"vz={msg.vz/100.0:+.2f}m/s")
+                    last_report = now
+            elif mtype == "STATUSTEXT":
+                print(f"STATUSTEXT: {msg.text}")
+
+        time.sleep(interval)
+
+
+def land_and_wait(master, timeout=20.0):
+    """Switch to LAND mode and watch telemetry until disarm or timeout."""
+    print("Sending LAND...")
+    set_mode(master, "LAND")
+    end = time.time() + timeout
+    last_report = 0.0
+    while time.time() < end:
+        for _ in range(20):
+            msg = master.recv_match(blocking=False)
+            if msg is None:
+                break
+            mtype = msg.get_type()
+            if mtype == "GLOBAL_POSITION_INT":
+                now = time.time()
+                if now - last_report >= 1.0:
+                    print(f"[land] rel_alt={msg.relative_alt/1000.0:.2f}m "
+                          f"vz={msg.vz/100.0:+.2f}m/s")
+                    last_report = now
+            elif mtype == "STATUSTEXT":
+                print(f"STATUSTEXT: {msg.text}")
+                if "Disarm" in msg.text or "disarm" in msg.text.lower():
+                    print("Drone disarmed — landing complete.")
+                    return
+        time.sleep(0.1)
+    print("Land watch ended (timeout).")
+
+
 def send_rc_override(master, roll=1500, pitch=1500, throttle=1200, yaw=1500):
     master.mav.rc_channels_override_send(
         master.target_system,
@@ -190,12 +392,19 @@ def main():
     wait_heartbeat(master)
     drain_messages(master, duration=2.0)
 
+    # Physical drone is QuadX (motors at diagonals). ArduPilot defaults can land on PLUS
+    # from a stale EEPROM — force X so the mixer matches the bridge's motor layout.
+    set_param(master, "FRAME_CLASS", 1)   # 1 = Quad
+    set_param(master, "FRAME_TYPE", 1)    # 1 = X
+
     # Narrow debug tweak: disable only the mag-field strength check while testing.
     set_param(master, "ARMING_MAGTHRESH", 0)
 
-    # First try the normal path.
+    # First try the normal path. Wait for EKF3 to report "using GPS" before
+    # the arm attempt — otherwise GUIDED arm fails with "Need Position Estimate"
+    # because the EKF's origin isn't set yet.
     set_mode(master, "GUIDED")
-    drain_messages(master, duration=2.0)
+    wait_for_ekf_ready(master, timeout=30.0)
 
     arm(master, force=False)
     drain_messages(master, duration=4.0)
@@ -204,8 +413,11 @@ def main():
     print("Armed after normal arm?", armed)
 
     if armed:
-        takeoff(master, TAKEOFF_ALT)
-        drain_messages(master, duration=10.0)
+        # Stream position targets continuously from t=0 — this keeps GUIDED alive
+        # throughout the climb so ArduPilot doesn't throttle down near the target.
+        takeoff_and_hold(master, TAKEOFF_ALT, hold_s=HOLD_SECONDS, rate_hz=HOLD_SEND_HZ)
+        # Graceful landing at the end
+        land_and_wait(master, timeout=20.0)
         return
 
     if not FORCE_ARM_FALLBACK:

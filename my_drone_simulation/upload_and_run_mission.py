@@ -1,7 +1,64 @@
 from pymavlink import mavutil
+import datetime
+import json
+import os
+import sys
 import time
 
 MASTER = "udpin:localhost:14551"
+
+# Log file location — one JSONL per run, timestamped, under mission_logs/.
+# Auto-detect WSL vs Windows so the path works from either.
+if os.path.exists("/mnt/c"):   # running in WSL
+    MISSION_LOG_DIR = "/mnt/c/Users/user1811/Desktop/armen-capstone/mission_logs"
+else:                           # running in native Windows
+    MISSION_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\mission_logs"
+
+_LOG_FH = None
+_LOG_T0 = None
+
+
+def _log_init():
+    """Open a timestamped JSONL log and a text mirror for console output."""
+    global _LOG_FH, _LOG_T0
+    os.makedirs(MISSION_LOG_DIR, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(MISSION_LOG_DIR, f"mission_{stamp}.jsonl")
+    _LOG_FH = open(path, "w", buffering=1, encoding="utf-8")
+    _LOG_T0 = time.time()
+    print(f"Mission log: {path}")
+    _log_record("script", event="script_started")
+
+
+def _log_record(src, **payload):
+    """Append one JSONL line with `t` (seconds since script start) and `src` tag."""
+    if _LOG_FH is None:
+        return
+    t = round(time.time() - _LOG_T0, 4)
+    entry = {"t": t, "src": src, **payload}
+    _LOG_FH.write(json.dumps(entry, separators=(",", ":"), default=str) + "\n")
+
+
+def _log_mavlink_msg(msg):
+    """Record a MAVLink message with its full field set."""
+    if _LOG_FH is None or msg is None:
+        return
+    try:
+        fields = msg.to_dict()   # already contains a 'mavpackettype' or 'type' key
+    except Exception:
+        fields = {"raw": str(msg), "type": msg.get_type()}
+    _log_record("mavlink", **fields)
+
+
+def _log_close():
+    global _LOG_FH
+    if _LOG_FH is not None:
+        _log_record("script", event="script_ended")
+        try:
+            _LOG_FH.close()
+        except Exception:
+            pass
+        _LOG_FH = None
 
 # Mission geometry
 HOME_LAT = 40.192
@@ -24,7 +81,7 @@ INITIAL_DRAIN_SECONDS = 5.0
 PRE_ARM_STABILIZE_SECONDS = 10.0
 POST_ARM_STABILIZE_SECONDS = 3.0
 POST_AUTO_SWITCH_SECONDS = 3.0
-MISSION_MONITOR_SECONDS = 30.0
+MISSION_MONITOR_SECONDS = 300.0   # watch for 5 min — full mission is ~2 min + RTL + land
 
 MISSION_ACK_TYPES = {
     0: "ACCEPTED",
@@ -111,12 +168,14 @@ def request_streams(master):
 
 def drain_messages(master, duration=3.0):
     print(f"Reading messages for {duration:.1f}s...")
+    _log_record("script", event="drain_start", duration=duration)
     end = time.time() + duration
     while time.time() < end:
         msg = master.recv_match(blocking=True, timeout=0.5)
         if not msg:
             continue
 
+        _log_mavlink_msg(msg)
         mtype = msg.get_type()
 
         if mtype == "STATUSTEXT":
@@ -169,6 +228,91 @@ def wait_mission_ack(master, timeout=10.0):
         if msg:
             return msg
     return None
+
+
+def send_position_target(master, x, y, z, yaw=0.0):
+    """Position-only GUIDED target in LOCAL_NED. z negative = up."""
+    type_mask = 0b0000111111111000   # use pos, ignore vel/accel/yaw/yaw_rate
+    master.mav.set_position_target_local_ned_send(
+        0,
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+        type_mask,
+        x, y, z,
+        0, 0, 0,
+        0, 0, 0,
+        yaw, 0.0,
+    )
+
+
+def takeoff_guided_and_wait(master, alt, climb_timeout=25.0, rate_hz=5):
+    """Command GUIDED takeoff and stream position targets until target altitude
+    is reached. Returns True on success. Keeps streaming throughout so GUIDED's
+    3-second idle timeout doesn't kick in and cut throttle mid-climb.
+    """
+    print(f"GUIDED takeoff to {alt:.1f}m...")
+    master.mav.command_long_send(
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+        0,
+        0, 0, 0, 0,
+        0, 0, float(alt),
+    )
+    ack = wait_command_ack(master, mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, timeout=3.0)
+    if ack:
+        print(f"Takeoff ACK: {command_ack_name(ack.result)}")
+    else:
+        print("Takeoff ACK: none")
+
+    interval = 1.0 / rate_hz
+    start = time.time()
+    last_report = 0.0
+    while time.time() - start < climb_timeout:
+        send_position_target(master, 0.0, 0.0, -alt)
+        for _ in range(20):
+            msg = master.recv_match(blocking=False)
+            if msg is None:
+                break
+            _log_mavlink_msg(msg)
+            mtype = msg.get_type()
+            if mtype == "GLOBAL_POSITION_INT":
+                alt_now = msg.relative_alt / 1000.0
+                now = time.time()
+                if now - last_report >= 1.0:
+                    print(f"[climb] t={now-start:4.1f}s rel_alt={alt_now:.2f}m vz={msg.vz/100.0:+.2f}m/s")
+                    last_report = now
+                if alt_now >= 0.95 * alt:
+                    print(f"Reached {alt_now:.2f}m (target {alt}m). Climb done.")
+                    return True
+            elif mtype == "STATUSTEXT":
+                print(f"STATUSTEXT: {msg.text}")
+        time.sleep(interval)
+    print(f"Climb timeout after {climb_timeout:.0f}s.")
+    return False
+
+
+def wait_for_ekf_using_gps(master, timeout=30.0):
+    """Block until the EKF reports 'IMU0 is using GPS' (AUTO mode requires this).
+
+    Scans STATUSTEXT messages for the specific phrase. Also accepts 'origin set'
+    as a secondary sign — older/newer firmwares have slightly different wording.
+    """
+    print(f"Waiting up to {timeout:.0f}s for EKF to start using GPS...")
+    end = time.time() + timeout
+    while time.time() < end:
+        msg = master.recv_match(type="STATUSTEXT", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        _log_mavlink_msg(msg)
+        text = msg.text
+        print(f"STATUSTEXT: {text}")
+        if "is using GPS" in text or "EKF3 active" in text and "origin set" in text:
+            print("EKF is ready.")
+            return True
+    print("Timed out waiting for EKF-using-GPS signal.")
+    return False
 
 
 def set_param(master, name, value, timeout=5.0):
@@ -417,13 +561,30 @@ def upload_mission(master, items):
 
 
 def set_current_mission_item(master, seq=0):
-    master.mav.mission_set_current_send(
+    """Force MISSION_CURRENT to seq using MAV_CMD_DO_SET_MISSION_CURRENT (command
+    with ACK). More reliable than the legacy MISSION_SET_CURRENT message — waits
+    to confirm ArduPilot actually accepted the seq change."""
+    print(f"Setting current mission item = {seq} (via DO_SET_MISSION_CURRENT command)...")
+    master.mav.command_long_send(
         master.target_system,
         master.target_component,
-        seq
+        mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT,
+        0,
+        float(seq),
+        0, 0, 0, 0, 0, 0
     )
-    print(f"Requested current mission item = {seq}")
-    time.sleep(1.0)
+    ack = wait_command_ack(master, mavutil.mavlink.MAV_CMD_DO_SET_MISSION_CURRENT, timeout=3.0)
+    if ack:
+        print(f"DO_SET_MISSION_CURRENT ACK: {command_ack_name(ack.result)}")
+    else:
+        # Fallback to legacy message if command wasn't supported
+        print("DO_SET_MISSION_CURRENT: no ACK, falling back to legacy MISSION_SET_CURRENT")
+        master.mav.mission_set_current_send(
+            master.target_system,
+            master.target_component,
+            seq
+        )
+    time.sleep(0.5)
 
 
 def start_mission(master):
@@ -443,7 +604,9 @@ def start_mission(master):
 
 
 def main():
+    _log_init()
     print("Connecting to SITL...")
+    _log_record("script", event="connecting", master=MASTER)
     master = mavutil.mavlink_connection(MASTER)
 
     wait_heartbeat(master)
@@ -461,32 +624,46 @@ def main():
     upload_mission(master, items)
     drain_messages(master, duration=3.0)
 
-    set_mode(master, "STABILIZE")
-    drain_messages(master, duration=PRE_ARM_STABILIZE_SECONDS)
+    # Try to see "EKF is using GPS" but don't fail hard if it hasn't fired yet —
+    # in 4.8-dev the message sometimes comes only after arming starts, and arm
+    # has its own checks we're skipping via ARMING_SKIPCHK=24 anyway.
+    wait_for_ekf_using_gps(master, timeout=20.0)
+    drain_messages(master, duration=2.0)
+
+    # ArduCopter 4.8-dev refuses to arm in AUTO mode ("Auto mode not armable")
+    # AND auto-advances MISSION_CURRENT past the takeoff if we arm in a
+    # non-AUTO ground mode. Workaround: take off in GUIDED (our proven path),
+    # then switch to AUTO while airborne to execute the remaining waypoints.
+
+    set_mode(master, "GUIDED")
+    drain_messages(master, duration=2.0)
 
     arm(master, force=False)
     drain_messages(master, duration=5.0)
 
     armed = wait_armed(master, timeout=5.0)
-    print("Armed after normal arm?", armed)
-
+    print("Armed in GUIDED?", armed)
     if not armed and FORCE_ARM_FALLBACK:
         print("Normal arm failed. Trying force arm.")
         arm(master, force=True)
         drain_messages(master, duration=4.0)
         armed = wait_armed(master, timeout=5.0)
-        print("Armed after force arm?", armed)
 
     if not armed:
         print("Vehicle is not armed. Stop here and inspect STATUSTEXT / EKF / GPS health.")
         return
 
-    print("Vehicle armed. Holding briefly before AUTO...")
-    drain_messages(master, duration=POST_ARM_STABILIZE_SECONDS)
+    # Climb to MISSION_ALT under GUIDED, streaming position targets so GUIDED
+    # doesn't idle-timeout mid-climb.
+    if not takeoff_guided_and_wait(master, alt=MISSION_ALT, climb_timeout=25.0):
+        print("Takeoff didn't reach target altitude. Aborting.")
+        return
 
-    # Re-assert mission start point immediately before AUTO
-    set_current_mission_item(master, seq=0)
-    drain_messages(master, duration=2.0)
+    # Airborne. Jump mission past the takeoff item, then switch to AUTO.
+    # AUTO mode accepts an armed, airborne drone (no "Missing Takeoff Cmd"
+    # because we're not on the ground) and will execute from MISSION_CURRENT.
+    set_current_mission_item(master, seq=1)
+    drain_messages(master, duration=1.0)
 
     set_mode(master, "AUTO")
     drain_messages(master, duration=2.0)
@@ -495,7 +672,11 @@ def main():
     drain_messages(master, duration=MISSION_MONITOR_SECONDS)
 
     print("Mission script finished monitoring.")
+    _log_close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        _log_close()

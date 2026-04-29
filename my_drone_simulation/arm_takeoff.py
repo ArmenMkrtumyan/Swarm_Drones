@@ -1,7 +1,7 @@
 from pymavlink import mavutil
 import time
 
-MASTER = "udpin:localhost:14551"
+MASTER = "udpin:0.0.0.0:14551"
 TAKEOFF_ALT = 3.0
 
 def wait_command_ack(master, command, timeout=5):
