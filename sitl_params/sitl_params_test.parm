@@ -1,0 +1,82 @@
+# SITL parameter baseline — KNOWN-GOOD reference config.
+#
+# This is the snapshot from the REFERENCE_first_real_flight_20260430_202605
+# session: drone took off cleanly, climbed to ~16 m, oscillated ±10° in pitch
+# but stayed upright and bounded. It is NOT a clean hover yet — autotune is
+# still required to refine the gains — but it represents the "confirmed
+# floating-base + collisions + sensor IDs all working" baseline that future
+# experimental runs should regress to whenever a tweak goes wrong.
+#
+# Promote a new config to this file ONLY after a flight is verified to fly
+# stably. To revert: cp sitl_params_best.parm sitl_params_test.parm.
+#
+# Notes inline mark which lines are SITL-only vs which transfer to the real
+# F450 — pay attention before flashing onto hardware.
+
+SCHED_LOOP_RATE 100
+FRAME_CLASS 1
+FRAME_TYPE 1
+ARMING_MAGTHRESH 0
+
+# SITL-ONLY: skip GPS (bit 3 = 8) + INS (bit 4 = 16) pre-arm checks. 4.8-dev
+# flags SITL's JSON-backend GPS as "unhealthy" and its gyro-rate as too low
+# relative to SCHED_LOOP_RATE even though both are fine for sim.
+ARMING_SKIPCHK 24
+
+# SITL-ONLY: cleaner simulated GPS so Loiter/Auto pre-arm passes without
+# waiting minutes. Names changed to SIM_GPS1_* in ArduCopter 4.5+.
+SIM_GPS1_NUMSATS 18
+SIM_GPS1_HDOP 70
+
+# Relax the hard GPS-quality threshold that gates Loiter/Auto arming.
+GPS_HDOP_GOOD 230
+
+# Hover-throttle prior — real F450 4S/920kv setups converge here.
+MOT_THST_HOVER 0.5
+
+# Cap guided takeoff climb rate to 1.5 m/s (default 2.5 m/s builds too much
+# upward momentum for the 1.96 kg drone to arrest cleanly at target alt).
+WPNAV_SPEED_UP 150
+WPNAV_ACCEL_Z 100
+PILOT_SPEED_UP 150
+PILOT_ACCEL_Z 100
+
+# Safety: cap lean angle at 30°.
+ANGLE_MAX 3000
+
+# Raise auto-disarm timeout to 60s for mission-script timing.
+DISARM_DELAY 60
+
+# SITL-ONLY: terrain DB is incomplete for Yerevan and returns bogus offsets.
+TERRAIN_ENABLE 0
+WPNAV_RFND_USE 0
+
+# Rate gains for our 1.96 kg + forward-CoM build. Default 0.135 over-corrects,
+# 0.05 under-corrects (drone tips faster than controller responds). 0.10 is
+# the proven "wiggly but flying" baseline. Real F450-with-stereocam owners
+# would land in the same neighborhood — these transfer.
+ATC_RAT_RLL_P 0.10
+ATC_RAT_RLL_I 0.10
+ATC_RAT_PIT_P 0.10
+ATC_RAT_PIT_I 0.10
+# ATC_RAT_*_D left at defaults (0.0036) — bumping to 0.008 over-damped the
+# corrective response and let the drone settle into a sustained 30° lean.
+
+# AUTOTUNE setup, used after we have a stable hover from these baseline gains.
+AUTOTUNE_AXES 7
+AUTOTUNE_AGGR 0.075
+
+# SITL-ONLY: disable EKF auto-action on failsafe. SITL's JSON-backend GPS
+# reports vel_acc=0, making the EKF variance check hyper-sensitive.
+FS_EKF_ACTION 0
+FS_GCS_ENABLE 0
+
+# SITL-ONLY: relax EK3_GPS_CHECK to NSats+HDoP only (bits 0-1, value 3).
+# Default 31 includes a speed_err check that the JSON GPS can't pass.
+EK3_GPS_CHECK 3
+
+# GPS glitch radius: 100m (default 25m is too tight for sim transients).
+EK3_GLITCH_RAD 100
+
+# SITL-ONLY: clean baro to avoid spurious vz in GLOBAL_POSITION_INT at rest.
+SIM_BARO_RND 0.01
