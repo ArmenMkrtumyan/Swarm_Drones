@@ -28,9 +28,9 @@ The simulator is calibrated to the actual hardware this project flies (**[Hawk's
 | Battery | 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60 | 330 g |
 | Props | 9450 self-tightening (CW + CCW) | 10 g each; 4× = 40 g |
 | Flight controller | Pixhawk 2.4.8, PX4 autopilot | 15.8g |
-| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. | 161 g |
-| Companion | NVIDIA Jetson Nano | 61 g |
-| Total mass | ~1.9 kg | Project calibration value; not a component mass |
+| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. | 159 g |
+| Companion | NVIDIA Jetson Nano | 178 g |
+| Total mass | ~1.3 kg | Project calibration value; not a component mass |
 
 Full reference numbers (hover times, cruise / range estimates, calibration sources) live in [`docs/f450-reference.md`](docs/f450-reference.md).
 
