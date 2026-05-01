@@ -92,16 +92,13 @@ Tag rules:
 | `--drones N` | 3 | swarm size |
 | `--seed N` | 17 | reproducibility |
 
-**There is intentionally no `--steps` flag and no step-count cap.** The simulation runs until one of two natural terminal conditions is reached:
+The simulation runs until one of two natural terminal conditions is reached:
 
 - `env.is_done()` — 100 % coverage (mission success)
 - `env.all_depleted()` — every drone hit its voltage cutoff (mission failure)
 
-The all-depleted condition is **physics-bounded**: maximum sim time is `(initial_energy − cutoff_energy) / P_hover ≈ 121 kJ / 165 W ≈ 734 s ≈ 7340 steps`. Past that, every drone has hit cutoff and `is_terminal()` fires automatically — no artificial step cap needed.
 
-**To compress wall-clock time on a long run, use the speed slider in the GUI window** (1× / 2× / 5× / 10× / 20×, bottom of the figure). It controls how many `env.step()` calls happen between renders — each step still uses the same `step_seconds = 0.1` and the same physics, so the simulation is bit-identical regardless of slider value. At 20× a 12-minute hover plays in ~36 s real time. The slider does **not** scale `step_seconds` itself; doing that would let drones travel further than `drone_radius` per step and break wall-collision detection.
-
-(Changing the swarm config — more drones, larger sensor radius, smaller map — also shortens runs but gives you a different mission, not just a faster wall-clock. Pick the slider when you want the same mission but less waiting; pick a config change when you want a different scenario.)
+**To compress wall-clock time on a long run, use the speed slider in the GUI window** (1× / 2× / 5× / 10× / 20×, bottom of the figure). It controls how many `env.step()` calls happen between renders — each step still uses the same `step_seconds = 0.1` and the same physics, so the simulation is bit-identical regardless of slider value. At 20× a 12-minute hover plays in ~36 s real time.
 
 For verification scripts (separate from demos), see [verification.md](verification.md).
 
@@ -126,15 +123,17 @@ python tools/editor.py --size 21
 
 Controls:
 
-- **left-drag** — paint walls
-- **right-drag** — erase to free
-- **s** — save (default path: `outputs/maps/custom_map.npy`)
-- **c** — clear interior (keep boundary)
-- **r** — reset to fresh boundary-walled grid
-- **f** — fill all interior with walls
-- **v** — toggle validation overlay
-- **g** — toggle grid lines
-- **q** — quit
+| Input | Action |
+|---|---|
+| **left-drag** | paint walls |
+| **right-drag** | erase to free |
+| **s** | save (default path: `outputs/maps/custom_map.npy`) |
+| **c** | clear interior (keep boundary) |
+| **r** | reset to fresh boundary-walled grid |
+| **f** | fill all interior with walls |
+| **v** | toggle validation overlay |
+| **g** | toggle grid lines |
+| **q** | quit |
 
 Live validation overlays:
 

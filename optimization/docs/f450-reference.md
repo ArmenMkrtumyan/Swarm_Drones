@@ -64,15 +64,6 @@ Two compounding choices:
 2. **`sensor_range = 1.6 cells × 5 m/cell = 8 m`** comes directly from the camera's stereo depth ceiling. Beyond 8 m the depth quality drops below the disparity-resolution threshold, so we treat 8 m as the radial coverage limit. The HFOV (54°) is verbatim from the lens datasheet.
 
 
-## Battery options the F450 supports
-
-The F450 frame officially accepts **3S or 4S LiPo** packs (per both [Hawk's Work product spec](https://www.hawks-work.com/pages/f450-drone)). Anything outside 3S–4S is out of spec for typical 920 KV motors and 20 A ESCs.
-
-| Pack | Voltage | Common capacities | Prop size | Notes |
-|---|---|---|---|---|
-| **3S LiPo** (this project) | 11.1 V nominal (12.6 V full → 9.0 V empty) | 2200 / 2700 / 4000 / **4200(chosen)** / 5000 mAh | **9450 (chosen)** or 1045 | Hawk's Work F450 ships with 9450 props on 3S. Hover power ≈ 145–185 W depending on mass and prop choice. |
-| **4S LiPo** (alternative) | 14.8 V nominal (16.8 V full → 12.0 V empty) | 3300 / 4000 / 6000 mAh | **8" required** (NOT 9450 or 1045) | Faster forward flight and more thrust headroom; mandatory smaller props because 9450/10" at 4S overspeed and overheat 920 KV motors. |
-
 ## Hover time
 
 Direct calculation, `t = E_pack / P_hover`:

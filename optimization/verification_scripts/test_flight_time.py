@@ -227,12 +227,12 @@ def run_headless() -> bool:
     # (10 V cutoff trips with ~28 % reserve, so spendable < full-pack).
     HOVER_MIN_INFERRED = 14.0
     HOVER_MAX_INFERRED = 17.0
-    # Cruise at 7.5 m/s: no F450-specific cruise-endurance measurement is
-    # published, so we use hover-range × translational-lift gain [1.00 … 1.20]
-    # as a real-world bound (see f450-reference.md "Cruise"). The sim's v²
-    # monotone model omits the translational-lift dip on purpose, so cruise
-    # cutoff lands below this bound — the gap is the pessimism we accept for a
-    # monotone-in-speed energy cost.
+    # Cruise at 9.0 m/s (= max_speed): no F450-specific cruise-endurance
+    # measurement is published, so we use hover-range × translational-lift
+    # gain [1.00 … 1.20] as a real-world bound (see f450-reference.md
+    # "Cruise"). The sim's v² monotone model omits the translational-lift
+    # dip on purpose, so cruise cutoff lands below this bound — the gap is
+    # the pessimism we accept for a monotone-in-speed energy cost.
     CRUISE_MIN_INFERRED = HOVER_MIN_INFERRED * 1.00  # 14.0
     CRUISE_MAX_INFERRED = HOVER_MAX_INFERRED * 1.20  # 20.4
 

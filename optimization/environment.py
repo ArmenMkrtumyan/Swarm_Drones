@@ -54,10 +54,9 @@ class SimConfig:
         21×21 map                            = 105 m × 105 m
 
     `flight_altitude_max_m = 10.0` is the operational ceiling our build is
-    intended for (well within the camera's 0.95-8 m stereo depth range, no
-    gimbal needed for a downward look since the camera is forward-facing
-    and the drone yaws/pitches to redirect it). It's informational only —
-    the sim is 2D and treats altitude as an abstraction.
+    intended for. It's informational only — the sim is 2D and treats
+    altitude as an abstraction (no vertical dynamics, no AGL-dependent
+    sensor behavior).
     """
     step_seconds: float = 0.1            # how much sim time one env.step() advances
     meters_per_cell: float = 5.0         # cell ↔ meter conversion (see class docstring)
@@ -80,8 +79,12 @@ class DroneConfig:
                            (camera's stereo depth ceiling; visual range is
                            further but unreliable for depth-localized coverage)
         sensor_hfov_rad  = 54° (from the lens datasheet at docs/camera_specs/)
-        max_yaw_rate     = 1.5 rad/s ≈ 86°/s — typical quadcopter spec
-        max_yaw_accel    = 4.0 rad/s² (reaches max_yaw_rate in ~0.4 s)
+        max_yaw_rate     = 1.5 rad/s ≈ 86°/s — conservative coverage scan rate
+                           (full 360° in ~4.2 s); PX4/ArduPilot firmware
+                           defaults sit at ~200°/s
+        max_yaw_accel    = 4.0 rad/s² — chosen for ~0.4 s yaw-settle time
+                           (1.5 / 4.0 ≈ 0.38 s); engineering judgment, not a
+                           physics anchor
     """
     # Forward-wedge sensor (STEEReoCAM Nano forward-facing, see docs/camera_specs/)
     sensor_range: float = 1.6                          # cells (= 8 m at 5 m/cell — depth ceiling)
@@ -100,14 +103,17 @@ class DroneConfig:
     # if their build is significantly lighter or heavier (1.0 kg → ~8 m/s sweet
     # spot; 1.8 kg → ~11 m/s). See docs/f450-reference.md → "Default `max_speed`".
     max_speed: float = 1.8                             # cells / second (= 9.0 m/s at 5 m/cell)
-    max_accel: float = 2.0                             # cells / second² (≈ 10 m/s² at 5 m/cell)
+    max_accel: float = 2.5                             # cells / second² (= 12.5 m/s² ≈ 1.3 g at 5 m/cell;
+                                                       # ~65–80 % of physical max √(T²−W²)/m at TWR ≈ 2:1
+                                                       # for our 1.3 kg build — stability margin)
 
     # Yaw (camera scanning) — independent of translation in this 2D model.
     # Real quadcopters can yaw at 90-200°/s; we use 86°/s as a conservative default.
     max_yaw_rate: float = 1.5                          # rad / s
     max_yaw_accel: float = 4.0                         # rad / second²
 
-    drone_radius: float = 0.05    # cells (≈ 0.25 m: Hawk's Work F450 half-width); collision only
+    drone_radius: float = 0.05    # cells (≈ 0.25 m: midpoint approximation of F450 footprint
+                                  # — bare-frame ~0.16 m, prop-tip extent ~0.28 m); collision only
     mass_kg: float = 1.3          # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
                                   # USED by the energy model: BatteryConfig.hover_power_w
                                   # is derived from this via momentum theory unless
@@ -142,15 +148,18 @@ class BatteryConfig:
     # `hover_power_for_mass`. Set to a float to override the derivation.
     hover_power_w: Optional[float] = None
 
-    # Rotor / atmosphere parameters used only when hover_power_w is derived.
-    # F450 9450 props at sea level: prop_diameter = 9.4" = 0.2388 m, 4 rotors.
+    # Rotor parameters used only when hover_power_w is derived.
+    # F450 with 9450 props: prop_diameter = 9.4" = 0.2388 m, 4 rotors.
     # figure_of_merit = 0.4168 is back-calibrated so the default 1.3 kg F450
-    # build yields exactly 165 W (preserves the previous hard-coded constant).
-    # 0.42 is a typical real-world FoM range for small electric quadcopters
-    # (lumps in motor/ESC efficiency on top of ideal momentum theory).
+    # build yields ≈165 W (matches the F450 community-data midpoint). FoM
+    # absorbs motor/ESC efficiency, blade non-ideality, and the mass-independent
+    # overhead the pure induced-power model omits — recalibrate if you change
+    # any of the rotor parameters.
+    # Air density (ρ = 1.225 kg/m³, ISA sea-level) is hardcoded in the formula
+    # below: 2D sim has no altitude, FoM is calibrated AT this ρ, so keeping it
+    # configurable would invite silent miscalibration.
     prop_diameter_m: float = 0.2388
     n_rotors: int = 4
-    air_density_kg_per_m3: float = 1.225  # ISA sea-level standard
     figure_of_merit: float = 0.4168
 
     # Quadratic profile-power adder, calibrated so that at v = 15 m/s = 3 cells/s
@@ -181,10 +190,11 @@ class BatteryConfig:
         purely-induced approximation diverges from real measured data.
         """
         g = 9.81
+        rho_air = 1.225  # kg/m³, ISA sea-level (see class comment for why hardcoded)
         a_disk = self.n_rotors * math.pi * (self.prop_diameter_m / 2.0) ** 2
         thrust = mass_kg * g
         return thrust ** 1.5 / (self.figure_of_merit
-                                * math.sqrt(2.0 * self.air_density_kg_per_m3 * a_disk))
+                                * math.sqrt(2.0 * rho_air * a_disk))
 
     @property
     def n_cells(self) -> int:
@@ -274,9 +284,11 @@ class CoverageEnv:
         # exceed the global mask — the gap measures overlap.
         self.drone_covered = np.zeros((n_drones, self.h, self.w), dtype=bool)
         # Entry-count state. `entry_count[i, y, x]` = number of times drone i has
-        # transitioned from outside-its-disc to inside-its-disc on cell (y, x).
-        # `prev_footprint[i]` is last step's disc, used to diff for new entries.
-        # Hovering does not inflate counts (cells stay inside the disc, no transition).
+        # transitioned from outside-its-wedge to inside-its-wedge on cell (y, x).
+        # `prev_footprint[i]` is last step's wedge, used to diff for new entries.
+        # Hovering with constant heading doesn't inflate counts (cells stay inside
+        # the wedge, no transition); yawing in place *does* generate entries as
+        # the wedge sweeps over new cells.
         self.entry_count = np.zeros((n_drones, self.h, self.w), dtype=np.int32)
         self.prev_footprint = np.zeros((n_drones, self.h, self.w), dtype=bool)
         # `first_visitor[y, x]` = drone index that first claimed the cell, -1 if
@@ -390,10 +402,10 @@ class CoverageEnv:
             drone.heading = new_heading
 
             # ---- battery ----
-            # Energy model unchanged from disc version: P_hover + k·|v|². Yaw
-            # has its own (small) energy cost in real flight via differential
-            # motor torque, but we don't include it — see docs/battery-model.md
-            # *Intentionally omitted* for the rationale.
+            # Energy model: P_hover + k·|v|². Heading-independent. Yaw has its
+            # own (small) energy cost in real flight via differential motor
+            # torque, but we don't include it — see docs/battery-model.md
+            # *Why `v²` and not `v³`* / *Intentionally omitted* for the rationale.
             speed_sq = float(new_vel @ new_vel)
             power_w = (self.battery_cfg.hover_power_w
                        + self.battery_cfg.motion_coeff_w_per_v2 * speed_sq)
@@ -563,9 +575,10 @@ class CoverageEnv:
     def total_visits(self, drone_idx: int) -> int:
         """
         Total cell-entry events by this drone over the whole run. A "visit" is
-        one transition from outside-disc to inside-disc for a single free cell.
-        Hovering does not inflate this — cells already in the disc don't count
-        again until the drone leaves and returns.
+        one transition from outside-wedge to inside-wedge for a single free cell.
+        Hovering with constant heading doesn't inflate this — cells already in
+        the wedge don't count again until the drone leaves and returns (or
+        yaws far enough that the wedge no longer covers them).
         """
         return int(self.entry_count[drone_idx].sum())
 

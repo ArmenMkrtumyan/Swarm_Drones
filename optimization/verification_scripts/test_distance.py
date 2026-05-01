@@ -63,10 +63,11 @@ MOTION_TOLERANCE_PCT = 0.01
 # test_flight_time uses for the same reason.
 RANGE_TOLERANCE_PCT = 0.5
 
-# Sensor footprint tolerance vs continuous πr² is loose because at r = 1.5
-# cells the disc only intersects 7-13 cells (depending on alignment). Discrete
-# vs continuous area diverges by ~25 % at this radius — that's geometry, not
-# a bug. We verify the scale conversion separately.
+# Sensor footprint tolerance vs continuous ½·r²·θ is loose because at r = 1.6
+# cells with HFOV = 54°, the wedge from a cell-centered drone only intersects
+# 1–4 cells depending on heading alignment. Discrete vs continuous area
+# diverges by ~10 % when averaged across headings — that's geometry, not a bug.
+# We verify the scale conversion separately.
 FOOTPRINT_TOLERANCE_PCT = 30.0
 
 
@@ -121,7 +122,7 @@ def test_tile_scale(env: CoverageEnv) -> bool:
           f"  ({max_accel_m_s2 / 9.81:.2f} g)")
     print(f"      max_yaw_rate        = {cfg.max_yaw_rate} rad/s ≈ {max_yaw_deg_s:.0f}°/s")
     print(f"      drone_radius        = {cfg.drone_radius} cells = {drone_radius_m} m"
-          f"  (Hawk's Work F450 half-width ≈ 0.25 m)")
+          f"  (F450 footprint midpoint: bare-frame ~0.16 m, prop-tip extent ~0.28 m)")
 
     all_ok = True
     all_ok &= _check("meters_per_cell == 5.0",                abs(mpc - 5.0) < 1e-9)
@@ -132,9 +133,9 @@ def test_tile_scale(env: CoverageEnv) -> bool:
     all_ok &= _check("max_speed       == 9.0 m/s",            abs(max_speed_m_s - 9.0) < 1e-9,
                      "translational-lift sweet-spot peak for 1.3 kg (~1.7·v_induced); F450 hardware max ≈ 15 m/s")
     all_ok &= _check("max_accel       ≈ 12.5 m/s² (~1.3 g)",  abs(max_accel_m_s2 - 12.5) < 1e-9,
-                     "typical multirotor punch")
+                     "below F450 hardware max (~1.6–2.0 g at TWR ≈ 2:1, 1.3 kg); ~65–80 % for stability margin")
     all_ok &= _check("drone_radius    == 0.25 m",             abs(drone_radius_m - 0.25) < 1e-9,
-                     "Hawk's Work F450 frame half-width")
+                     "F450 footprint midpoint (bare-frame ~0.16 m, prop-tip extent ~0.28 m, X-config 9450 props)")
     return all_ok
 
 

@@ -20,7 +20,7 @@ It has two halves: an **optimization** part that decides how drones move or spli
 
 The simulator is calibrated to the actual hardware this project flies (**[Hawk's Work F450](https://www.hawks-work.com/pages/f450-drone)**) — a 1.3 kg quadcopter with a Pixhawk 2.4.8 flight controller, a 3S 4200 mAh LiPo, and a forward-facing STEEReoCAM Nano stereo camera.
 
-Full hardware breakdown (per-component masses, camera geometry, battery options, hover times, cruise / range estimates, calibration sources) lives in [`docs/f450-reference.md`](docs/f450-reference.md).
+Full hardware breakdown (per-component masses, camera geometry, hover times, cruise / range estimates, calibration sources) lives in [`docs/f450-reference.md`](docs/f450-reference.md). 3S/4S battery options for the F450 frame are in [`docs/battery-model.md`](docs/battery-model.md).
 
 ---
 
@@ -30,10 +30,10 @@ Detailed docs live in [`docs/`](docs/) — each focused on one topic:
 
 | Doc | What's in it |
 |---|---|
-| [`docs/setup.md`](docs/setup.md) | Install, system deps for `--gui` on Linux/WSL, demo run modes, all CLI flags, map editor, outputs layout. |
-| [`docs/simulation-model.md`](docs/simulation-model.md) | Coordinate frame, world scale (5 m/cell), per-step flow, drone dynamics, wall collision, coverage and visit-count metrics, intentional gaps to Isaac. |
-| [`docs/battery-model.md`](docs/battery-model.md) | Energy bookkeeping (`P = P_hover + k·v²`), mass-aware hover power derivation, unit conversions and equation sources, voltage cutoff, calibration, worked example. |
-| [`docs/f450-reference.md`](docs/f450-reference.md) | Real-world F450 references: 3S/4S battery options, hover/cruise/range direct calculations (mass-aware), max forward speed, community-data sanity checks. |
+| [`docs/setup.md`](docs/setup.md) | Install, GUI deps for Linux/WSL, demo run modes, CLI flags, map editor, outputs layout. |
+| [`docs/simulation-model.md`](docs/simulation-model.md) | World scale (5 m/cell), per-step flow contract, drone dynamics, coverage + visit-count metrics, intentional gaps to Isaac. |
+| [`docs/battery-model.md`](docs/battery-model.md) | 3S/4S battery options, energy bookkeeping (`P = P_hover + k·v²`), mass-aware hover power, voltage cutoff, calibration. |
+| [`docs/f450-reference.md`](docs/f450-reference.md) | Hawk's Work F450 hardware spec, camera geometry, hover / cruise / range direct calculations, community-data sanity checks. |
 | [`docs/verification.md`](docs/verification.md) | The three verification scripts (`test_overlap`, `test_flight_time`, `test_distance`) — what each asserts, how to run headless or `--gui`. |
 
 ---
