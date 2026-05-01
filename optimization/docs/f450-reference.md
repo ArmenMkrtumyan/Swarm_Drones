@@ -4,7 +4,7 @@ Real-world F450 specs and community-measured flight times, used to sanity-check 
 
 ## This project's drone (Hawk's Work F450 build)
 
-The components our simulator's calibration is anchored to, sourced from the [Hawk's Work F450 Drone product page](https://www.hawks-work.com/pages/f450-drone):
+[Hawk's Work F450 Drone product page](https://www.hawks-work.com/pages/f450-drone):
 
 | Component | Spec | Notes |
 |---|---|---|
@@ -169,6 +169,7 @@ Neither **max forward speed** nor **range** are published as official manufactur
 [`verification_scripts/test_distance.py`](verification.md#test_distancepy) asserts `range = cruise_endurance × cruise_speed × meters_per_cell` exactly through `env.step` (within 0.5 %, accounting for the final-step cutoff clamp), and prints the inferred-vs-actual range comparison so the pessimism is visible at run time.
 
 [src-f450-times]: https://www.amainhobbies.com/dji-flame-wheel-f450-quadcopter-drone-combo-kit-dji-nzm450c1/p297771
+[src-3s-lipo]: https://www.hawks-work.com/pages/rc-battery-4200-xt60
 [src-dji-forum-flight-time]: https://forum.dji.com/thread-4327-1-1.html
 [src-dronevibes-battery-size]: https://www.dronevibes.com/forums/threads/dji-f450-battery-size.12486/
 [src-helifreak-battery-choices]: https://www.helifreak.com/showthread.php?t=406895

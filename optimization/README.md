@@ -1,26 +1,36 @@
 # Swarm Drone Optimization: 2D Coverage Platform
 
-A fast, NumPy + matplotlib platform for evaluating swarm-coverage control methods before porting them to NVIDIA Isaac Sim. Continuous-action point-mass drones with speed/acceleration caps that mirror real quadcopter limits.
+## Abstract
 
-> Why 2D first? It's a cheap **falsification** tool — a method that fails here almost certainly fails in Isaac, so dead ends get caught quickly.
+Multiple drones must cover a target region as effectively as possible while minimizing energy consumption. The objective is multi-criteria:
+
+- maximize total area covered
+- avoid covering the same area repeatedly
+- minimize total energy usage
+- avoid collisions with each other and with obstacles
+
+This repository is a NumPy + matplotlib testbed for swarm-coverage control: continuous-action point-mass drones with speed/accel caps and an F450-calibrated battery model.
+
+It has two halves: an **optimization** part that decides how drones move or split the area, and a **simulation** part that demonstrates and evaluates the behavior.
+> Why 2D? It's a cheap **falsification** tool for the eventual Isaac Sim port. If an algorithm fails here, most likely it will fail in 3D simulation too.
 
 ---
 
-## Project drone
+## Prototype Drone
 
-The simulator is calibrated to the actual hardware this project flies — the **[Hawk's Work F450](https://www.hawks-work.com/pages/f450-drone)** build:
+The simulator is calibrated to the actual hardware this project flies (**[Hawk's Work F450](https://www.hawks-work.com/pages/f450-drone)**).
 
-| Component | Spec |
-|---|---|
-| Frame | Hawk's Work F450, 450 mm wheelbase, 280 g (clone of DJI Flame Wheel F450 — same airframe class) |
-| Motors | 4× A2212 920 KV brushless |
-| ESCs | 4× 20 A brushless with 5 V / 1 A BEC |
-| Battery | 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60 |
-| Props | 9450 self-tightening (CW + CCW) |
-| Flight controller | Pixhawk 2.4.8, PX4 autopilot |
-| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. |
-| Companion | NVIDIA Jetson Nano |
-| Total mass | ~1.9 kg |
+| Component | Spec | Mass |
+|---|---|---|
+| Frame | Hawk's Work F450, 450 mm wheelbase, clone of DJI Flame Wheel F450 — same airframe class | 280 g |
+| Motors | 4× A2212 920 KV brushless | 52 g each; 4× = 208 g |
+| ESCs | 4× 20 A brushless with 5 V / 1 A BEC | 17.9 g each; 4× = 71.6 g |
+| Battery | 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60 | 330 g |
+| Props | 9450 self-tightening (CW + CCW) | 10 g each; 4× = 40 g |
+| Flight controller | Pixhawk 2.4.8, PX4 autopilot | 15.8g |
+| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. | 161 g |
+| Companion | NVIDIA Jetson Nano | 61 g |
+| Total mass | ~1.9 kg | Project calibration value; not a component mass |
 
 Full reference numbers (hover times, cruise / range estimates, calibration sources) live in [`docs/f450-reference.md`](docs/f450-reference.md).
 
@@ -37,19 +47,6 @@ Detailed docs live in [`docs/`](docs/) — each focused on one topic:
 | [`docs/battery-model.md`](docs/battery-model.md) | Energy bookkeeping (`P = P_hover + k·v²`), unit conversions and equation sources, voltage cutoff, calibration, worked example. |
 | [`docs/f450-reference.md`](docs/f450-reference.md) | Real-world F450 references: 3S/4S battery options, published hover times, inferred cruise endurance and range, max forward speed. |
 | [`docs/verification.md`](docs/verification.md) | The three verification scripts (`test_overlap`, `test_flight_time`, `test_distance`) — what each asserts, how to run headless or `--gui`. |
-
----
-
-## Problem
-
-Multiple drones must cover a target region as effectively as possible while minimizing energy consumption. The objective is multi-criteria:
-
-- maximize total area covered
-- avoid covering the same area repeatedly
-- minimize total energy usage
-- avoid collisions with each other and with obstacles
-
-The work has two halves: an **optimization** part that decides how drones move or split the area, and a **simulation** part that demonstrates and evaluates the behavior.
 
 ---
 
