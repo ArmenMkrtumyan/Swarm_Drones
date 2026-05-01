@@ -31,11 +31,11 @@ SIM_GPS1_HDOP 70
 # Relax the hard GPS-quality threshold that gates Loiter/Auto arming.
 GPS_HDOP_GOOD 230
 
-# Hover-throttle prior — real F450 4S/920kv setups converge here.
-MOT_THST_HOVER 0.5
+# Hover-throttle prior — real F450 3S/920kv setups converge here.
+MOT_THST_HOVER 0.55
 
 # Cap guided takeoff climb rate to 1.5 m/s (default 2.5 m/s builds too much
-# upward momentum for the 1.96 kg drone to arrest cleanly at target alt).
+# upward momentum for the 1.365 kg drone to arrest cleanly at target alt).
 WPNAV_SPEED_UP 150
 WPNAV_ACCEL_Z 100
 PILOT_SPEED_UP 150
@@ -51,7 +51,7 @@ DISARM_DELAY 60
 TERRAIN_ENABLE 0
 WPNAV_RFND_USE 0
 
-# Rate gains for our 1.96 kg + forward-CoM build. Default 0.135 over-corrects,
+# Rate gains for our 1.365 kg + forward-CoM build. Default 0.135 over-corrects,
 # 0.05 under-corrects (drone tips faster than controller responds). 0.10 is
 # the proven "wiggly but flying" baseline. Real F450-with-stereocam owners
 # would land in the same neighborhood — these transfer.

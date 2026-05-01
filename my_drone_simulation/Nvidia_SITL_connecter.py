@@ -169,9 +169,17 @@ T_RFU_TO_FRD = np.array([
 # MOTOR MODEL — omega^2 thrust + yaw torque with first-order lag
 # =========================================================
 PWM_IDLE = 1000.0
-PWM_HOVER = 1500.0                  # PWM at which total thrust = m * g (auto-calibrates K_THRUST)
+# PWM at which total thrust = m * g (auto-calibrates K_THRUST). Set to match
+# MOT_THST_HOVER=0.55 (real F450 3S/920kv hover thrust fraction) so that bridge
+# T/W ratio is realistic ~1.82, not the previously-implied 4.0.
+# Math: MOT_THST_HOVER = (omega_hover / omega_max)^2; with 0.55, hover PWM
+# fraction = sqrt(0.55) = 0.742, so PWM_HOVER = 1000 + 0.742*1000 = 1742.
+PWM_HOVER = 1742.0
 PWM_MAX = 2000.0
-OMEGA_MAX_RAD_S = 1000.0            # rotor speed cap at PWM_MAX (≈ 9550 RPM)
+# Rotor speed cap at PWM_MAX (≈ 7640 RPM) — A2212 920kv + 9450 prop on 3S,
+# under load (real motors lose ~25% of no-load RPM with prop attached).
+# Was previously 1000 (overestimate).
+OMEGA_MAX_RAD_S = 800.0
 MOTOR_TIME_CONSTANT_S = 0.03        # first-order response from commanded to actual omega
 K_TORQUE_OVER_K_THRUST = 0.02       # reaction-torque / thrust ratio (m); ~0.02 for 8–10" props
 
@@ -192,7 +200,7 @@ MOTOR_THRUST_DIR_LOCAL = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 # wrench (force + torque) to the articulation root (base_link) in one call.
 # This avoids subtle force-propagation quirks when applying per-motor thrust
 # to non-root bodies of a PhysX articulation.
-MOTOR_ARM_LENGTH = 0.239   # half-diagonal in meters
+MOTOR_ARM_LENGTH = 0.159   # motor X/Y coord from base origin (= 225 mm half-diagonal / sqrt(2)); F450 has 450 mm motor-to-motor diagonal
 MOTOR_POS_REL_BASE = np.array([
     [+MOTOR_ARM_LENGTH, +MOTOR_ARM_LENGTH, 0.0],  # FR: +X right, +Y forward
     [-MOTOR_ARM_LENGTH, -MOTOR_ARM_LENGTH, 0.0],  # RL
@@ -505,8 +513,8 @@ async def setup_bridge():
     stage = omni.usd.get_context().get_stage()
     total_mass, com_local_base = compute_composite_com_local_base(stage, ROBOT_PATH)
     if total_mass < 0.1:
-        print(f"WARNING: computed drone mass {total_mass:.3f} kg looks wrong; falling back to 1.4 kg")
-        total_mass = 1.4
+        print(f"WARNING: computed drone mass {total_mass:.3f} kg looks wrong; falling back to 1.365 kg")
+        total_mass = 1.365
         com_local_base = np.zeros(3, dtype=np.float64)
     omega_hover = (PWM_HOVER - PWM_IDLE) / (PWM_MAX - PWM_IDLE) * OMEGA_MAX_RAD_S
     K_THRUST = (total_mass * 9.81) / (4.0 * omega_hover ** 2)

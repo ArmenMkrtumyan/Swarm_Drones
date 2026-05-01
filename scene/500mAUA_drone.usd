@@ -85,10 +85,13 @@ def Xform "World"
                 def Camera "left_camera"
                 {
                     float2 clippingRange = (0.01, 10000000)
-                    float focalLength = 18.147562
+                    # STEEReoCAM Nano spec (per docs/f450-reference.md):
+                    # focal=4.3mm, sensor 4.857×3.956mm → HFOV 54°, VFOV 49.5°
+                    float focalLength = 4.3
                     float focusDistance = 400
+                    float horizontalAperture = 4.382
                     custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.04343134250768455)
-                    float verticalAperture = 20.955
+                    float verticalAperture = 3.957
                     quatd xformOp:orient = (0.9899181448460244, -0.13056802721838195, 0.05442901581146526, 0.007179067536989471)
                     double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
                     double3 xformOp:translate = (-0.015184630875889102, -0.0017323649067140234, -0.008933874958776344)
@@ -104,9 +107,19 @@ def Xform "World"
                 doc = "Name override for prim lookup in base name search"
             )
 
+            # NOTE for future investigation: right camera mount orient and
+            # right_camera translate were previously authored as
+            #   mount.orient = (0.7071, 0.7071, 0, 0) (90° about X)
+            #   right_camera.translate = (-3.6346, 3.4147, 0.248) m (3.6 m offset!)
+            # which produced a stereo baseline orders of magnitude wrong vs the
+            # STEEReoCAM Nano's 100 mm spec (docs/f450-reference.md). Reset to
+            # mirror the left-camera mount + small +X offset for a clean 100 mm
+            # baseline. Verify in Isaac that the rendered right view actually
+            # sits 100 mm to the right of the left view; if not, the mount/camera
+            # axis convention may need a different fix.
             def Xform "right_camera_mount"
             {
-                quatd xformOp:orient = (0.7071067811865476, 0.7071067811865476, 0, 0)
+                quatd xformOp:orient = (-0.5000000000000002, -0.5, 0.5, 0.5)
                 double3 xformOp:scale = (1, 1, 1)
                 double3 xformOp:translate = (0, 0, 0)
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
@@ -114,14 +127,17 @@ def Xform "World"
                 def Camera "right_camera"
                 {
                     float2 clippingRange = (0.01, 10000000)
-                    float focalLength = 18.147562
+                    # STEEReoCAM Nano spec (per docs/f450-reference.md):
+                    # focal=4.3mm, sensor 4.857×3.956mm → HFOV 54°, VFOV 49.5°
+                    float focalLength = 4.3
                     float focusDistance = 400
+                    float horizontalAperture = 4.382
                     bool omni:kit:cameraLock = 0
                     custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.11527102199583833)
-                    float verticalAperture = 20.955
-                    quatd xformOp:orient = (0.6805817960085473, -0.25131652681015976, -0.6456102362994262, -0.23840269520132848)
+                    float verticalAperture = 3.957
+                    quatd xformOp:orient = (0.9899181448460244, -0.13056802721838195, 0.05442901581146526, 0.007179067536989471)
                     double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
-                    double3 xformOp:translate = (-3.6346490897191153, 3.4147242558131237, 0.2480634752946478)
+                    double3 xformOp:translate = (0.084815369124110898, -0.0017323649067140234, -0.008933874958776344)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                 }
             }
@@ -234,7 +250,10 @@ def Xform "World"
                 bool enabled = 1
                 int linearAccelerationFilterWidth = 1
                 int orientationFilterWidth = 1
-                float sensorPeriod = 0.0001
+                # 1 kHz IMU rate — matches Pixhawk EKF input rate, also the SITL
+                # bridge's max consumption rate. Was previously 10 kHz which the
+                # downstream pipeline can't use anyway.
+                float sensorPeriod = 0.001
                 token visibility = "inherited"
                 quatd xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:scale = (1, 1, 1)
@@ -407,7 +426,10 @@ def Xform "World"
         normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)] (
             interpolation = "faceVarying"
         )
-        uniform token physics:approximation = "none"
+        # boundingCube collapses the launchpad mesh to its AABB for physics.
+        # The Cube primitive is axis-aligned and exact under this approximation;
+        # much faster than full triangle-mesh contact resolution.
+        uniform token physics:approximation = "boundingCube"
         bool physics:collisionEnabled = 1
         point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5)]
         texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1), (1, 0), (1, 1), (0, 1), (0, 0), (0, 1), (0, 0), (1, 0), (1, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (1, 0), (1, 1), (0, 1), (0, 0)] (
@@ -544,6 +566,15 @@ over "OmniverseKit_Right"
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 }
 
+# NOTE for future investigation: physxScene:enableStabilization = 0 here
+# overrides the basefile_physics.usd value of 1. This is a PhysX SOLVER
+# feature (numerical stability of articulated rigid bodies under stress) —
+# it is NOT the same as ArduPilot/SITL attitude stabilization, and SITL
+# does not see it. Setting was inherited from earlier experimentation that
+# also disabled rotor-joint drives (see comment in /joints below); both
+# changes were made together to stop a takeoff-tumble issue. If you re-enable
+# this and the drone starts oscillating or drifting at hover, that's why.
+# Decide whether to keep it off or test re-enabling once flight is otherwise stable.
 def PhysicsScene "physicsScene" (
     prepend apiSchemas = ["PhysxSceneAPI"]
 )
