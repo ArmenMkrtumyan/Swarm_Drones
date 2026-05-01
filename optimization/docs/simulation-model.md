@@ -16,7 +16,7 @@ The 2D platform has just enough physics to expose the algorithmic question (does
 |---|---|---|---|
 | `sensor_range` | 1.6 | 8.0 m | STEEReoCAM Nano stereo depth ceiling (datasheet) |
 | `sensor_hfov_rad` | — | 54° | STEEReoCAM Nano lens datasheet §5 |
-| `max_speed` (demo) | 1.5 | 7.5 m/s | realistic F450 cruise (sweet spot for translational lift) |
+| `max_speed` | 1.8 | 9.0 m/s | translational-lift sweet-spot peak for our 1.3 kg build (`≈ 1.7 × v_induced`); see [`f450-reference.md` → Default `max_speed`](f450-reference.md) |
 | `max_accel` (demo) | 2.5 | 12.5 m/s² ≈ 1.3 g | typical multirotor punch |
 | `max_yaw_rate` | — | 1.5 rad/s ≈ 86°/s | typical quadcopter yaw rate |
 | `max_yaw_accel` | — | 4.0 rad/s² | reaches max_yaw_rate in ~0.4 s |
@@ -32,7 +32,7 @@ The energy model's `motion_coeff_w_per_v2 = 13` is calibrated against `meters_pe
 
 **Drone-radius caveat.** At the default scale, `drone_radius = 0.05` cells = 0.25 m matches the Hawk's Work F450 half-width and is small relative to the 5 m corridor, so collision logic essentially treats drones as point masses (correct for coverage missions; would need bumping for tight-tunnel scenarios).
 
-**Mass.** `DroneConfig.mass_kg = 1.9` (Hawk's Work F450 frame + 4× A2212 920 KV motors + 4× 20 A ESCs + Pixhawk 2.4.8 + Jetson Nano + STEEReoCAM + 3S 4200 mAh LiPo + cabling) is **informational only** — the power model uses back-calculated `hover_power_w = 165 W` rather than deriving it from `m·g` and rotor area. Adding aerodynamic derivation would require rotor area and air density. See [`f450-reference.md`](f450-reference.md) for the full component list and links to the Hawk's Work product page.
+**Mass.** `DroneConfig.mass_kg = 1.3` (Hawk's Work F450 frame + 4× A2212 920 KV motors + 4× 20 A ESCs + Pixhawk 2.4.8 + Jetson Nano + STEEReoCAM + 3S 4200 mAh LiPo + cabling) feeds directly into the power model: `BatteryConfig.hover_power_w` is **derived** from `mass_kg` via momentum theory (`P = T^1.5 / (FoM·√(2·ρ·A_disk))`, with `T = m·g`) at env-construction time, and `FoM = 0.4168` is calibrated so a 1.3 kg build yields ≈165 W. Bumping `mass_kg` automatically rescales `hover_power_w` (e.g., 1.5 kg → ~204 W). Override via `BatteryConfig(hover_power_w=...)` if you have a measured value. See [`f450-reference.md`](f450-reference.md) for the per-component mass breakdown and [`battery-model.md`](battery-model.md) (*Mass-aware hover power*) for the full derivation.
 
 ## Per-step flow
 
@@ -79,12 +79,12 @@ Configuration is split across two dataclasses so the names match what the values
 | `flight_altitude_max_m` | `SimConfig` | 10.0 m | (kept) | Operational ceiling; informational only. |
 | `sensor_range` | `DroneConfig` | 1.6 cells (= 8 m) | (kept) | Wedge radial range; STEEReoCAM stereo depth ceiling. |
 | `sensor_hfov_rad` | `DroneConfig` | 54° | (kept) | Wedge horizontal FOV; STEEReoCAM lens datasheet. |
-| `max_speed` | `DroneConfig` | 1.0 cells/s (= 5 m/s) | 1.5 (= 7.5 m/s) | Magnitude cap on `|vel|`, not per-axis. |
+| `max_speed` | `DroneConfig` | 1.8 cells/s (= 9.0 m/s) | (kept) | Magnitude cap on `|vel|`, not per-axis. Translational-lift sweet-spot peak for 1.3 kg. |
 | `max_accel` | `DroneConfig` | 2.0 cells/s² (= 10 m/s²) | 2.5 (= 12.5 m/s²) | Magnitude cap on `|a|`, not per-axis. |
 | `max_yaw_rate` | `DroneConfig` | 1.5 rad/s ≈ 86°/s | (kept) | Scalar cap on `|yaw_rate|`. |
 | `max_yaw_accel` | `DroneConfig` | 4.0 rad/s² | (kept) | Scalar cap on `|α_yaw|`. |
 | `drone_radius` | `DroneConfig` | 0.05 cells (= 0.25 m) | (kept) | Used by wall collision only. |
-| `mass_kg` | `DroneConfig` | 1.9 kg | (kept) | F450 + payload; informational, see *World scale*. |
+| `mass_kg` | `DroneConfig` | 1.3 kg | (kept) | F450 + payload; **used by the energy model** — `BatteryConfig.hover_power_w` is derived from this via momentum theory. See *World scale*. |
 
 `DroneConfig` is currently shared across every drone (homogeneous fleet). To support heterogeneous swarms later, pass a list of `DroneConfig` to `CoverageEnv` instead of one shared instance.
 

@@ -29,9 +29,9 @@ and the cell→meter conversion compounded over a full battery discharge.
 
 **No published F450 range spec exists** — the F450 is a DIY frame kit, so
 range depends on the builder's motors / props / battery choices. Our
-comparison range (5.4–8.1 km at 7.5 m/s) is *inferred* from the published
-F450 hover endurance × translational-lift cruise gain. See README "Cruise
-(forward flight)" for the derivation.
+comparison range (7.6–11.0 km at 9.0 m/s, for our 1.3 kg config) is *inferred*
+from the interpolated F450 hover endurance × translational-lift cruise gain.
+See `docs/f450-reference.md` "Cruise (forward flight)" for the derivation.
 
 Usage:
   python verification_scripts/test_distance.py            # headless asserts
@@ -81,7 +81,7 @@ def _build_one_drone_env(grid_size: int = 51) -> CoverageEnv:
         grid=grid,
         n_drones=1,
         sim=SimConfig(step_seconds=0.1, meters_per_cell=5.0),
-        drone=DroneConfig(sensor_range=1.6, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=1.6, max_speed=1.8, max_accel=2.5),
     )
     env.reset(seed=0)
     return env
@@ -129,8 +129,8 @@ def test_tile_scale(env: CoverageEnv) -> bool:
                      "STEEReoCAM stereo depth ceiling (datasheet)")
     all_ok &= _check("sensor_hfov     == 54°",                abs(sensor_hfov_deg - 54.0) < 1e-9,
                      "STEEReoCAM lens datasheet §5")
-    all_ok &= _check("max_speed       == 7.5 m/s",            abs(max_speed_m_s - 7.5) < 1e-9,
-                     "realistic F450 cruise (manufacturer spec ≈ 15 m/s max forward)")
+    all_ok &= _check("max_speed       == 9.0 m/s",            abs(max_speed_m_s - 9.0) < 1e-9,
+                     "translational-lift sweet-spot peak for 1.3 kg (~1.7·v_induced); F450 hardware max ≈ 15 m/s")
     all_ok &= _check("max_accel       ≈ 12.5 m/s² (~1.3 g)",  abs(max_accel_m_s2 - 12.5) < 1e-9,
                      "typical multirotor punch")
     all_ok &= _check("drone_radius    == 0.25 m",             abs(drone_radius_m - 0.25) < 1e-9,
@@ -324,15 +324,17 @@ def test_range_to_cutoff(env: CoverageEnv) -> bool:
 
     print()
     print(f"      F450 range references (no published spec exists for this DIY frame):")
-    print(f"        sim (this run):              {actual_distance_m / 1000:.2f} km")
-    print(f"        inferred real F450 (7.5 m/s sweet spot):  5.4–8.1 km")
-    print(f"          = hover (12-15 min, published) × 1.0–1.2 (translational-lift gain)")
-    print(f"            × 7.5 m/s cruise speed × 60 s/min")
-    print(f"        F450 max forward (~15 m/s, drag-dominated):  ~9 km full pack")
-    print(f"          (Bauersfeld & Scaramuzza, 2021 — calibration anchor)")
-    print(f"      Sim is pessimistic by ~15-30% on cruise endurance (no")
-    print(f"      translational-lift dip in the v² monotone model), so the range")
-    print(f"      is correspondingly pessimistic — by design.")
+    print(f"        sim (this run, mass-aware P_hover, 1.3 kg, 9.0 m/s):   {actual_distance_m / 1000:.2f} km")
+    print(f"        community-inferred bound (1.3 kg, 9.0 m/s):            7.6–11.0 km")
+    print(f"          = hover community range (14-17 min) × translational-lift")
+    print(f"            gain (×1.0–1.2) × 9.0 m/s × 60 s/min")
+    print(f"        sim at F450 max forward (1.3 kg, 15 m/s):              6.45 km")
+    print(f"          P = P_hover(1.3 kg) + k·v² = 165 + 13·9 = 282 W;")
+    print(f"          t_cutoff = 121,212 J / 282 W = 7.2 min × 15 m/s")
+    print(f"          (matches Bauersfeld & Scaramuzza 2021 ≈ 280 W at 15 m/s)")
+    print(f"      Sim cruise sits below the community-inferred bound because the v²")
+    print(f"      monotone model omits the translational-lift dip — pessimistic by")
+    print(f"      design. Range tracks endurance, so it carries the same pessimism.")
     return all_ok
 
 
@@ -454,8 +456,8 @@ def run_gui() -> None:
                 f"DONE  ✓  range traveled: {distance_m:.0f} m "
                 f"({distance_m / 1000:.2f} km)  in {format_duration(env.time_seconds)} "
                 f"at {target_v_mps:.1f} m/s\n"
-                f"F450 reference:  inferred real-world cruise range 5.4–8.1 km "
-                f"(hover × translational-lift × 7.5 m/s) — sim pessimistic by design"
+                f"F450 community-inferred bound:  7.6–11.0 km "
+                f"(1.3 kg, hover range × translational-lift gain × 9.0 m/s) — sim sits below it by design"
             )
         else:
             remaining_to_cutoff_j = env.drones[0].battery_j - cfg.cutoff_energy_j

@@ -6,17 +6,17 @@ Real-world F450 specs and community-measured flight times, used to sanity-check 
 
 [Hawk's Work F450 Drone product page](https://www.hawks-work.com/pages/f450-drone):
 
-| Component | Spec | Notes |
+| Component | Spec | Mass |
 |---|---|---|
-| Frame | Hawk's Work F450, 450 mm wheelbase, 280 g | Clone of DJI Flame Wheel F450 — same airframe class |
-| Motors | **A2212 920 KV** brushless (or MT2213 935 KV variant) | Equivalent to DJI E300 920 KV — our `P_hover` calibration is for this motor class |
-| ESC | 20 A brushless with 5 V / 1 A BEC | Within Hawk's Work's recommended 15–30 A range |
-| Battery | **3S 4200 mAh 25 C, 11.1 V nominal, XT60** ([Hawks-Work product link][src-3s-lipo]) | Default `BatteryConfig` values |
-| Props | **9450** self-tightening (9.4" × 5" pitch, CW + CCW) | Slightly smaller than DJI's stock 1045 — effect on hover power is ~5–8 %, within our model tolerance |
-| Flight controller | Pixhawk 2.4.8 (open-source PX4 autopilot) | Doesn't affect physics calibration |
-| Camera | e-con Systems STEEReoCAM Nano (2× OV2311 stereo, 100 mm baseline, 0.95 – 8 m depth range, **HFOV 54° / VFOV 49.5° / DFOV 77.9°**, 4.3 mm f/2.8 M12 lens, 6-axis on-board IMU) | See `docs/camera_specs/` for full datasheet + lens datasheet |
-| Companion computer | NVIDIA Jetson Nano | Adds ~140 g payload |
-| **Total mass** | **~1.9 kg** (frame + motors + ESCs + battery + Pixhawk + Jetson + STEEReoCAM + cabling) | Within Hawk's Work's 1.8 kg max-takeoff spec; our `DroneConfig.mass_kg = 1.9` |
+| Frame | Hawk's Work F450, 450 mm wheelbase, clone of DJI Flame Wheel F450 — same airframe class | 280 g |
+| Motors | 4× A2212 920 KV brushless | 52 g each; 4× = 208 g |
+| ESCs | 4× 20 A brushless with 5 V / 1 A BEC | 17.9 g each; 4× = 71.6 g |
+| Battery | 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60 | 330 g |
+| Props | 9450 self-tightening (CW + CCW) | 10 g each; 4× = 40 g |
+| Flight controller | Pixhawk 2.4.8, PX4 autopilot | 15.8g |
+| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. | 159 g |
+| Companion | NVIDIA Jetson Nano | 178 g |
+| Total mass | - | 1.3 kg |
 
 ## Camera (STEEReoCAM Nano) — used to derive the sensor wedge
 
@@ -34,11 +34,11 @@ Full datasheet + lens datasheet are in [`docs/camera_specs/`](camera_specs/). Ke
 | Pixel size | 3 µm × 3 µm | Datasheet §3.2 |
 | Per-eye resolution | 1600 × 1300 (2 MP) @ 30 fps | Datasheet §1 |
 | Stereo baseline | 100 mm | Datasheet §1 (mechanical drawing) |
-| **Stereo depth range** | **0.95 – 8 m** | e-con product page / FAQ |
+| **Stereo depth range** | **0.95 – 8 m** | [e-con product page / FAQ](https://www.e-consystems.com/nvidia-cameras/jetson-agx-xavier-cameras/stereo-camera.asp#:~:text=Accurate%20depth%20sensing%20with%20a%20flexible%20range%20between%200.95m%20to%208m)|
 | On-board IMU | 6-axis (3D accel + 3D gyro) | Datasheet §3 |
 | Lens mount | M12 (S-mount), pre-calibrated lens pair | Datasheet §3.1 |
 
-### Camera orientation: forward-facing, not downward
+### Camera orientation: forward-facing
 
 The STEEReoCAM Nano sits **rigid on the front of the drone, looking forward**. There is no gimbal. To point the camera at something off-axis the drone has to physically reorient — yaw to swing the camera left/right, pitch to tilt up/down, roll for lateral. In our 2D top-down simulator we model **yaw only**; pitch and roll are abstracted as "optimized for whatever the controller is doing." For real flight, controllers will need explicit pitch control to inspect the ground at low altitudes (the camera looks at the horizon during level hover).
 
@@ -56,15 +56,6 @@ wedge area       = ½ · r² · θ = ½ · 8² · (54° in rad) = ½ · 64 · 0.
 
 So at any moment a stationary drone covers ~30 m² of forward area. To scan a different direction the drone yaws (`max_yaw_rate ≈ 86°/s` — full 360° scan in ~4.2 s). To cover new ground the drone translates and the wedge slides forward along its heading.
 
-### Stereo depth range (the source of our 8 m wedge length)
-
-The **0.95 – 8 m** range applies to **stereo-derived depth** (3D position of points the camera sees). It comes from the 100 mm baseline geometry:
-
-- **Below 0.95 m**: the two stereo views diverge too much (large parallax), correspondence matching fails.
-- **Above 8 m**: parallax drops below the disparity-resolution threshold (sub-pixel for our 3 µm pixels), so depth becomes too noisy to use.
-
-For coverage purposes we use 8 m as the wedge's radial range — that's the largest distance at which the drone can confidently localize what it sees. **For future mapping / 3D-reconstruction work**, the same 0.95 – 8 m bound applies and limits useful flight altitude to ≤ 8 m AGL — flying higher means the ground is outside the depth range even if the camera tilts down. Visual sensing works further than 8 m (the lens still resolves features) but we can't recover their 3D position, so it's not useful for the kind of depth-localized coverage the simulator models.
-
 ### Why specifically `sensor_range = 1.6 cells` (= 8 m)?
 
 Two compounding choices:
@@ -72,103 +63,67 @@ Two compounding choices:
 1. **`meters_per_cell = 5.0`** was picked so the discrete grid resolves features at sensor scale — see [`simulation-model.md` → World scale](simulation-model.md#world-scale). It also keeps the energy-model calibration (`motion_coeff_w_per_v2 = 13`) intact.
 2. **`sensor_range = 1.6 cells × 5 m/cell = 8 m`** comes directly from the camera's stereo depth ceiling. Beyond 8 m the depth quality drops below the disparity-resolution threshold, so we treat 8 m as the radial coverage limit. The HFOV (54°) is verbatim from the lens datasheet.
 
-If you want to model a tighter range (e.g., to be conservative on depth quality near the ceiling), reduce `sensor_range`:
-
-```python
-from environment import SimConfig, DroneConfig
-
-# Example: 5 m radial range (comfortable depth-quality margin below the 8 m ceiling)
-drone = DroneConfig(sensor_range=1.0)   # 1.0 cells × 5 m/cell = 5 m
-```
-
-Changing `meters_per_cell` requires recalibrating the energy model's `motion_coeff_w_per_v2 = 0.51 × meters_per_cell²` — the verification scripts will catch any drift.
-
-### Note on ground sampling distance (GSD)
-
-GSD describes what a *downward-aimed* shot would resolve at altitude *h* — useful for inspection / mapping flights that pitch the drone forward to look at the ground:
-
-```
-GSD = h × pixel_pitch / focal_length = h × 3 µm / 4.3 mm = h × 0.698 mm per meter of altitude
-```
-
-| Altitude | GSD | Smallest detectable feature (~3 px) |
-|---|---|---|
-| 5 m | 3.5 mm/pixel | ~1 cm |
-| 8 m | 5.6 mm/pixel | ~1.7 cm |
-| 10 m (max) | 7.0 mm/pixel | ~2.1 cm |
-
-Our build's max altitude is 10 m (well within the camera's depth range), so even tilted-down inspection shots resolve features down to ~2 cm. Plenty for swarm-coverage tasks that look for cars, people, equipment, or terrain features. The simulator itself doesn't model the downward projection — the wedge is purely horizontal — so this table is reference only for mission planning.
 
 ## Battery options the F450 supports
 
-The F450 frame officially accepts **3S or 4S LiPo** packs (per both [Hawk's Work product spec](https://www.hawks-work.com/pages/f450-drone) and [DJI ARF spec](https://www.dji.com/flame-wheel-arf/spec) — same airframe class). Anything outside 3S–4S is out of spec for typical 920 KV motors and 20 A ESCs.
+The F450 frame officially accepts **3S or 4S LiPo** packs (per both [Hawk's Work product spec](https://www.hawks-work.com/pages/f450-drone)). Anything outside 3S–4S is out of spec for typical 920 KV motors and 20 A ESCs.
 
 | Pack | Voltage | Common capacities | Prop size | Notes |
 |---|---|---|---|---|
-| **3S LiPo** (this project) | 11.1 V nominal (12.6 V full → 9.0 V empty) | 2200 / 2700 / 4000 / 4200 / 5000 mAh | 9450 (Hawk's Work stock) or 1045 | Hawk's Work F450 ships with 9450 props on 3S. Hover power ≈ 145–185 W depending on mass and prop choice. |
+| **3S LiPo** (this project) | 11.1 V nominal (12.6 V full → 9.0 V empty) | 2200 / 2700 / 4000 / **4200(chosen)** / 5000 mAh | **9450 (chosen)** or 1045 | Hawk's Work F450 ships with 9450 props on 3S. Hover power ≈ 145–185 W depending on mass and prop choice. |
 | **4S LiPo** (alternative) | 14.8 V nominal (16.8 V full → 12.0 V empty) | 3300 / 4000 / 6000 mAh | **8" required** (NOT 9450 or 1045) | Faster forward flight and more thrust headroom; mandatory smaller props because 9450/10" at 4S overspeed and overheat 920 KV motors. |
 
-**Currently modelled in the sim**: the **Hawk's Work F450 reference pack — 3S 4200 mAh, 11.1 V nominal**, set in `BatteryConfig` defaults in `environment.py`. That's what every demo and verification script uses unless you override:
+## Hover time
 
-```python
-from environment import CoverageEnv, BatteryConfig
-env = CoverageEnv(
-    grid=grid, n_drones=4,
-    battery=BatteryConfig(voltage_v=14.8, capacity_mah=4000),  # → 4S 4000 mAh
-)
+Direct calculation, `t = E_pack / P_hover`:
+
+```
+E_pack    = 11.1 V × 4.2 Ah = 46.6 Wh = 167,832 J
+P_hover   = (m·g)^1.5 / (FoM · √(2·ρ·A_disk))     ← mass-aware, see below
+        = (1.3 · 9.81)^1.5 / (0.4168 · √(2·1.225·0.1791))
+        ≈ 165 W                              (for the default 1.3 kg build)
+t_full    = 167,832 / 165 = 1017 s = 17.0 min    (pack hard-empty)
+t_cutoff  = t_full × 0.72            = 12.2 min  (10 V cutoff, ~28 % reserve)
 ```
 
-`BatteryConfig.n_cells` auto-derives from `voltage_v / 3.7`, so per-cell full/empty/cutoff voltages all scale correctly — change `voltage_v` to 14.8 V and `cell_full_voltage_v × n_cells` becomes 16.8 V automatically. `hover_power_w` and `motion_coeff_w_per_v2` are calibrated to the 3S 920 KV + 9450 prop combo, though, so a meaningful 4S run would also need them re-tuned against measured 4S+8" data.
+**Sanity check vs community data.** Published F450 hover times for 3S packs span ~10–18 min depending on payload (1.0–1.8 kg) and capacity (2.2–5.0 Ah): heavier gimbal builds (~1.8 kg + 5 Ah) report ~15 min, lighter no-gimbal builds (~1.0 kg + 2.7 Ah) report ~12 min ([DJI forum][src-dji-forum-flight-time], [DroneVibes][src-dronevibes-battery-size], [HeliFreak][src-helifreak-battery-choices]). Our 1.3 kg + 4.2 Ah config interpolates to 14–17 min; the model's 17.0 min full-pack number sits at the top of that range, and the 12.2 min cutoff sits ~3 min below the lower bound on purpose, as flight reserve.
 
-## Reference F450 hover times (real-world)
+## Default `max_speed` — derived from rotor induced velocity
 
-Published hover-time figures from owners, listings, and community threads. Most data is from DJI Flame Wheel F450 users (older, more popular platform), but the airframe class is identical to Hawk's Work F450, so these numbers apply directly to our build. Our 3S 4200 mAh + 1.9 kg config sits in the middle of this table:
+The simulator's default `DroneConfig.max_speed = 1.8 cells/s = 9.0 m/s` is **derived from physics for our 1.3 kg build**. The anchor is the rotor's induced velocity at hover (`v_induced`), which sets the scale for forward-flight efficiency: maximum-range cruise is empirically observed at roughly `1.4–1.5 × v_induced` .
 
-| Pack | Payload | Hover time | Source |
-|---|---|---|---|
-| 4S 6000 mAh | + GoPro | 20+ min | [DroneVibes][src-dronevibes-battery-size] |
-| 3S 5000 mAh | light (no gimbal) | ~18 min | [DJI forum / E300 motors][src-dji-forum-flight-time] |
-| 3S 5000 mAh | 1.8 kg (gimbal + video tx) | ~15 min | [DJI forum][src-dji-forum-flight-time] |
-| 4S 4000 mAh | 1.8 kg (gimbal + video tx) | ~12 min | [DJI forum][src-dji-forum-flight-time] |
-| **→ 3S 4200 mAh** | **~1.9 kg (Jetson + camera, OUR CONFIG)** | **12–15 min** | interpolated |
-| 3S 4000 mAh | 2212/920 motors + Graupner 10×5 props | ~13 min | [HeliFreak][src-helifreak-battery-choices] |
-| 3S 2700 mAh | 1.0 kg (no gimbal) | ~12 min | [DroneVibes][src-dronevibes-battery-size] |
-| 3S 2650 mAh | 10" props, light | 8–8.5 min | [HeliFreak][src-helifreak-battery-choices] |
-| 3S 2200 mAh | light | ~10 min | [amainhobbies F450 listing][src-f450-times] |
+```
+v_induced(m) = √(T / (2·ρ·A_disk))     where  T = m·g
 
-Our model (`P_hover = 165 W`, 10 V cutoff at ~28% remaining) predicts **17.0 min** to a fully empty pack and **12.2 min** to the conservative cutoff — the latter sits inside the published 12–15 min range for our 3S 4200 mAh + 1.9 kg config.
+For 1.3 kg + F450 (9450 props):
+  A_disk    = 4·π·(0.1194)²        = 0.179 m²
+  T         = 1.3 · 9.81           = 12.75 N
+  v_induced = √(12.75 / (2·1.225·0.179))  ≈ 5.4 m/s
+
+rough multirotor estimate:
+  v_max_range ≈ 1.48 × 5.4 m/s     ≈ 8.0 m/s
+  v_max_endurance ≈ 0.87 × 5.4 m/s ≈ 4.7 m/s   (min total power)
+
+  → picked 9.0 m/s (= 1.67 × v_induced, ~12 % above max-range optimum
+                    for some headroom, rounded to a clean 1.8 cells/s)
+```
+
 
 ## Cruise (forward flight)
 
-**No F450-specific published cruise-endurance measurement exists** at a defined forward speed — community discussions and academic papers measure either hover or a different airframe. The cruise comparison range is therefore *inferred* from hover endurance + the well-documented multirotor power-vs-speed curve:
+Direct calculation from the energy model `P = P_hover + k·v²`, with `P_hover` mass-aware (see *Hover time* above):
 
-| Speed regime | Power vs hover | Endurance vs hover |
-|---|---|---|
-| 5–9 m/s (translational-lift sweet spot) — **our 7.5 m/s sits here** | **−10 to −20 %** | **+10–20 % (longer)** |
-| 9–12 m/s (lift dip ends, drag rising) | ~hover | ~hover |
-| 12–15 m/s (drag-dominated, F450 max forward) | +50 to +70 % | −30 to −40 % (~10 min for our pack) |
-
-**Best-estimate cruise range for our 7.5 m/s + 3S 4200 mAh + 1.9 kg config: 12–18 minutes** (= hover × [1.00 … 1.20]). The lower bound is "no translational-lift benefit"; the upper bound is the +20 % gain reported in community measurements.
-
-Sources for the speed-vs-power curve: [Quadcopter Flight School: hover vs. forward flight power efficiency][src-translational-lift], [DJI forum — translational lift for endurance][src-dji-translational-lift], [ArduPilot Discourse — community hover vs. cruise current measurements][src-ardupilot-power-feedback] (a 680 mm quad reported identical 10 A current at hover and level cruise — consistent with the translational-lift dip cancelling the `v²` rise), [Bauersfeld & Scaramuzza, 2021 — Range, Endurance, and Optimal Speed Estimates for Multicopters][src-bauersfeld] (first-principles model validated up to 65 km/h on a 6-inch frame; their power curve is the basis for our `k = 13` calibration at the 15 m/s extreme).
-
-**Our sim is intentionally pessimistic at cruise.** The energy model uses `P = P_hover + k·v²` (monotone in speed) and omits the translational-lift dip — see [`battery-model.md` → Why `v²` and not `v³`](battery-model.md#why-v²-and-not-v³). At our `max_speed = 7.5 m/s` (right in the sweet spot), the sim predicts **10.4 min cruise** vs. the inferred real-world 12–18 min. The trade-off is deliberate: a monotone-in-speed cost makes optimization well-behaved, at the cost of slightly under-predicting cruise endurance in the 5–9 m/s band. Controllers that try to game a translational-lift dip won't win anything in this sim.
-
-Verified by [`verification_scripts/test_flight_time.py`](verification.md#test_flight_timepy), which runs `env.step()` to depletion in two regimes (hover, cruise at 7.5 m/s), asserts agreement with the analytical formula within 0.5 %, and prints the cruise number alongside the inferred 12–18 min real-world range so the gap is visible at run time.
-
-## F450 max forward speed and range (no published spec)
-
-Neither **max forward speed** nor **range** are published as official manufacturer specs — they depend on motors / props / battery / payload. The defensible numbers we use:
-
-- **Max forward speed (920 KV motors + 9450 / 10" props + 3S)**: ~15 m/s (~54 km/h, ~33 mph). This is the calibration anchor for our `motion_coeff_w_per_v2 = 13` constant ([Bauersfeld & Scaramuzza, 2021][src-bauersfeld]). One review site quotes 130 km/h (36 m/s) for an F450, but the stock-config evidence points to ~15 m/s; the higher figure likely assumes mods (4S, faster motors, smaller props).
-- **Range = endurance × cruise speed**, derived not measured. For our config (3S 4200 mAh, 1.9 kg payload, 7.5 m/s sweet-spot cruise):
-  - **Inferred real F450**: 12–18 min cruise endurance × 7.5 m/s = **5.4–8.1 km** one-way.
-  - **At F450 max forward (~15 m/s)**: ~10 min × 15 m/s ≈ 9 km full pack (drag-dominated).
-  - **Our sim**: 624 s × 7.5 m/s = **4.68 km** — pessimistic by the same translational-lift omission that affects cruise endurance.
-
-[`verification_scripts/test_distance.py`](verification.md#test_distancepy) asserts `range = cruise_endurance × cruise_speed × meters_per_cell` exactly through `env.step` (within 0.5 %, accounting for the final-step cutoff clamp), and prints the inferred-vs-actual range comparison so the pessimism is visible at run time.
+```
+v_cruise         = 9.0 m/s = 1.8 cells/s         (default max_speed; see above)
+k                = 13 W·(cells/s)⁻²              (profile-power adder)
+P_cruise(1.3 kg) = 165 + 13·1.8² = 207.12 W
+t_full           = 167,832 / 207.12 = 810 s = 13.5 min
+t_cutoff         = t_full × 0.72 = 9.75 min      (10 V cutoff, ~28 % reserve)
+range_cutoff     = 9.75 min × 60 · 9.0 m/s = 5.27 km
+```
 
 [src-f450-times]: https://www.amainhobbies.com/dji-flame-wheel-f450-quadcopter-drone-combo-kit-dji-nzm450c1/p297771
+[src-multirotor-power]: https://arxiv.org/pdf/2209.04128
 [src-3s-lipo]: https://www.hawks-work.com/pages/rc-battery-4200-xt60
 [src-dji-forum-flight-time]: https://forum.dji.com/thread-4327-1-1.html
 [src-dronevibes-battery-size]: https://www.dronevibes.com/forums/threads/dji-f450-battery-size.12486/

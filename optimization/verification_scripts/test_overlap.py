@@ -106,7 +106,7 @@ def _build_env() -> CoverageEnv:
         grid=grid,
         n_drones=2,
         sim=SimConfig(step_seconds=0.1),
-        drone=DroneConfig(sensor_range=0.01, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=0.01, max_speed=1.8, max_accel=2.5),
     )
     env.reset(seed=0)
     # Fixed palette seed so the visuals look the same on every run (visual diff

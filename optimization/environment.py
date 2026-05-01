@@ -47,7 +47,9 @@ class SimConfig:
     (motion_coeff_w_per_v2 = 13 was anchored to this value). At 5 m/cell:
 
         sensor_range  = 1.6 cells × 5 m/cell = 8.0 m  (STEEReoCAM stereo depth ceiling)
-        max_speed     = 1.5 cells/s × 5      = 7.5 m/s  (realistic F450 cruise)
+        max_speed     = 1.8 cells/s × 5      = 9.0 m/s  (translational-lift sweet-spot
+                                                         peak for our 1.3 kg build —
+                                                         see DroneConfig.max_speed)
         max_accel     = 2.5 cells/s² × 5     = 12.5 m/s² ≈ 1.3 g
         21×21 map                            = 105 m × 105 m
 
@@ -85,8 +87,19 @@ class DroneConfig:
     sensor_range: float = 1.6                          # cells (= 8 m at 5 m/cell — depth ceiling)
     sensor_hfov_rad: float = math.radians(54.0)        # STEEReoCAM HFOV (lens datasheet §5)
 
-    # Translation
-    max_speed: float = 1.0                             # cells / second (≈ 5 m/s at 5 m/cell)
+    # Translation. The default `max_speed = 1.8 cells/s = 9.0 m/s` (at 5 m/cell)
+    # is the translational-lift sweet-spot peak for our 1.3 kg F450 build:
+    #     v_induced(m) = √(m·g / (2·ρ·A_disk))     ← rotor's hover induced velocity
+    #     v_sweet      ≈ 1.5–2 × v_induced         ← lift-dip peak (multirotor power
+    #                                                literature; Bauersfeld 2021)
+    #     For 1.3 kg + F450 (A_disk = 0.179 m²):
+    #         v_induced = 5.4 m/s   →   v_sweet ≈ 8–11 m/s   →   pick 9.0 m/s
+    # This is well below the F450's ~15 m/s hardware max (the calibration anchor
+    # for `k = 13`) — chosen for a coverage mission rather than racing.
+    # Bumping `mass_kg` does NOT auto-rescale `max_speed`; the user should adjust
+    # if their build is significantly lighter or heavier (1.0 kg → ~8 m/s sweet
+    # spot; 1.8 kg → ~11 m/s). See docs/f450-reference.md → "Default `max_speed`".
+    max_speed: float = 1.8                             # cells / second (= 9.0 m/s at 5 m/cell)
     max_accel: float = 2.0                             # cells / second² (≈ 10 m/s² at 5 m/cell)
 
     # Yaw (camera scanning) — independent of translation in this 2D model.
@@ -95,9 +108,12 @@ class DroneConfig:
     max_yaw_accel: float = 4.0                         # rad / second²
 
     drone_radius: float = 0.05    # cells (≈ 0.25 m: Hawk's Work F450 half-width); collision only
-    mass_kg: float = 1.9          # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
-                                  # Informational only — power model uses back-calculated
-                                  # hover_power_w rather than deriving from m·g and rotor area.
+    mass_kg: float = 1.3          # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
+                                  # USED by the energy model: BatteryConfig.hover_power_w
+                                  # is derived from this via momentum theory unless
+                                  # explicitly set. See docs/f450-reference.md for the
+                                  # per-component breakdown and docs/battery-model.md
+                                  # for the derivation.
 
 
 @dataclass
@@ -107,16 +123,36 @@ class BatteryConfig:
         - Frame: F450 450 mm wheelbase (clone of DJI Flame Wheel F450)
         - Motors: 4× A2212 920 KV
         - ESCs: 4× 20 A brushless
-        - Props: 9450 self-tightening
+        - Props: 9450 self-tightening (9.4" diameter)
         - Battery: 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60
-        - Hover power: ~165 W (back-calculated from F450-class flight times)
 
     Per-step instantaneous power:  P = hover_power_w + motion_coeff_w_per_v2 * |v|^2
     Cutoff: drone is "depleted" once current_voltage_v(battery_j) <= min_voltage_v.
+
+    `hover_power_w` is **mass-aware**: when left as ``None`` (the default), it is
+    derived from `DroneConfig.mass_kg` at env-construction time via momentum
+    theory — `P_induced = T^1.5 / (FoM · √(2·ρ·A_disk))` with `T = m·g`.
+    Defaults give ~165 W at 1.3 kg (matches published F450 community data).
+    Set explicitly to override (e.g., to bench against a measured power figure).
     """
     voltage_v: float = 11.1             # nominal pack voltage (11.1 V = 3S LiPo: 3 × 3.7 V)
     capacity_mah: float = 4200.0        # F450 reference pack
-    hover_power_w: float = 165.0        # back-calculated from F450 flight times — see README
+
+    # If None, derived from DroneConfig.mass_kg in CoverageEnv.__init__ via
+    # `hover_power_for_mass`. Set to a float to override the derivation.
+    hover_power_w: Optional[float] = None
+
+    # Rotor / atmosphere parameters used only when hover_power_w is derived.
+    # F450 9450 props at sea level: prop_diameter = 9.4" = 0.2388 m, 4 rotors.
+    # figure_of_merit = 0.4168 is back-calibrated so the default 1.3 kg F450
+    # build yields exactly 165 W (preserves the previous hard-coded constant).
+    # 0.42 is a typical real-world FoM range for small electric quadcopters
+    # (lumps in motor/ESC efficiency on top of ideal momentum theory).
+    prop_diameter_m: float = 0.2388
+    n_rotors: int = 4
+    air_density_kg_per_m3: float = 1.225  # ISA sea-level standard
+    figure_of_merit: float = 0.4168
+
     # Quadratic profile-power adder, calibrated so that at v = 15 m/s = 3 cells/s
     # (real F450 max), total power ≈ 280 W (matches published measurements:
     # ~70% over hover). k_meters = 115 W / 15² ≈ 0.51 W·s²/m²; converting via
@@ -127,6 +163,28 @@ class BatteryConfig:
     min_voltage_v: float = 10.0        # cutoff: 10 V / 3 cells ≈ 3.33 V/cell (cell-damage threshold)
     cell_full_voltage_v: float = 4.2   # per-cell maximum at 100% charge (LiPo standard)
     cell_dead_voltage_v: float = 3.0   # per-cell at 0% remaining (anchor for linear V(E))
+
+    def hover_power_for_mass(self, mass_kg: float) -> float:
+        """
+        Momentum-theory induced hover power for a quadrotor of total mass `mass_kg`:
+
+            P = T^1.5 / (FoM · √(2 · ρ · A_disk))     where  T = m · g
+
+        with `A_disk = n_rotors · π · (prop_diameter / 2)²`. The figure of
+        merit (FoM) is the calibration knob that lumps real losses (non-ideal
+        blade aerodynamics, motor + ESC efficiency, residual profile drag at
+        hover) into a single multiplier on the ideal-rotor formula. Defaults
+        give ≈165 W at the F450's 1.3 kg total mass.
+
+        See `docs/battery-model.md → "Mass-aware hover power"` for the
+        derivation, the FoM calibration story, and the regimes where the
+        purely-induced approximation diverges from real measured data.
+        """
+        g = 9.81
+        a_disk = self.n_rotors * math.pi * (self.prop_diameter_m / 2.0) ** 2
+        thrust = mass_kg * g
+        return thrust ** 1.5 / (self.figure_of_merit
+                                * math.sqrt(2.0 * self.air_density_kg_per_m3 * a_disk))
 
     @property
     def n_cells(self) -> int:
@@ -196,6 +254,16 @@ class CoverageEnv:
         self.sim_cfg = sim or SimConfig()
         self.drone_cfg = drone or DroneConfig()
         self.battery_cfg = battery or BatteryConfig()
+
+        # Resolve mass-aware hover power. If the caller didn't pin
+        # hover_power_w explicitly, derive it from drone mass via momentum
+        # theory and write the resolved float back into the dataclass — every
+        # downstream reader (env.step, demo, verification scripts) sees a
+        # concrete value, never None.
+        if self.battery_cfg.hover_power_w is None:
+            self.battery_cfg.hover_power_w = self.battery_cfg.hover_power_for_mass(
+                self.drone_cfg.mass_kg
+            )
 
         self.h, self.w = self.grid.shape
         self.covered = np.zeros_like(self.grid, dtype=bool)

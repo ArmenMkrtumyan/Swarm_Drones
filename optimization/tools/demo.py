@@ -189,7 +189,7 @@ def _print_hover_sanity_check(env: CoverageEnv) -> None:
         delta_pct = abs(actual_t - expected_t) / expected_t * 100
         ok = delta_pct < 1.0
         print(f"  Theoretical hover endurance to cutoff:  {expected_t:7.1f} s   "
-              f"(spendable {spendable_j:.0f} J ÷ P_hover {p_hover} W)")
+              f"(spendable {spendable_j:.0f} J ÷ P_hover {p_hover:.2f} W)")
         print(f"  Drone 1 actual depletion time:          {actual_t:7.1f} s   "
               f"({'✓ MATCH' if ok else '✗ MISMATCH'} — Δ = {delta_pct:.2f}%)")
     else:
@@ -274,7 +274,7 @@ def main() -> None:
         grid=grid,
         n_drones=args.drones,
         sim=SimConfig(step_seconds=0.1),
-        drone=DroneConfig(sensor_range=1.6, max_speed=1.5, max_accel=2.5),
+        drone=DroneConfig(sensor_range=1.6, max_speed=1.8, max_accel=2.5),
     )
     env.reset(seed=args.seed)
     # Random palette rotation each run (seed=None = OS entropy). Color choice

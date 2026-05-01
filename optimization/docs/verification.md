@@ -5,7 +5,7 @@
 | Script | Verifies |
 |---|---|
 | [`test_overlap.py`](#test_overlappy) | Visit-count overlap metrics (`total_visits`, `self_revisits`, `cross_overlap_visits`, `wasted_visits_total`) against a 2-drone scripted scenario. 9 hand-computed assertions. |
-| [`test_flight_time.py`](#test_flight_timepy) | Battery / energy model (`P_hover + k·v²`, voltage cutoff). Runs `env.step()` to depletion in hover and cruise regimes; asserts agreement with the analytical formula < 0.5 % and with the published F450 hover range (12–15 min for our 3S 4200 mAh + ~1.9 kg config). |
+| [`test_flight_time.py`](#test_flight_timepy) | Battery / energy model (`P_hover + k·v²` with mass-aware `P_hover`, voltage cutoff). Runs `env.step()` to depletion in hover and cruise regimes; asserts agreement with the analytical formula < 0.5 %. Also reports model output (17.0 min hover full-pack, 12.2 min hover cutoff, 9.8 min cruise cutoff at 9.0 m/s) alongside the community-data hover range (14–17 min) and the inferred-from-translational-lift cruise bound (14–20 min) as informational sanity checks for our 3S 4200 mAh + 1.3 kg default. |
 | [`test_distance.py`](#test_distancepy) | Tile scale (`meters_per_cell = 5.0`) and motion integration. Asserts F450 derived dimensions, that constant-velocity path length matches `v·t·m_per_cell` exactly, that sensor disc area falls within ±30 % of `π·r²`, and that range-to-cutoff equals `cruise_endurance × cruise_speed × m_per_cell`. |
 
 All three scripts have a headless mode (default — runs assertions to completion, exits 0/1) and a `--gui` mode (live animation). The GUI titles refresh as the sim runs so you can watch the metric in question evolve.
@@ -34,18 +34,18 @@ python verification_scripts/test_flight_time.py            # headless: prints re
 python verification_scripts/test_flight_time.py --gui      # live view, 1× / 5× / 10× / 20× speed slider
 ```
 
-One drone at the F450 reference config (3S 4200 mAh, 1.9 kg). Two regimes:
+One drone at the F450 reference config (3S 4200 mAh, 1.3 kg). Two regimes:
 
 1. **Hover** (`v = 0`): drone stays put, drain = `P_hover` only. Asserts depletion time = `(E_initial − E_cutoff) / P_hover` within 0.5 %.
-2. **Cruise** (`v = max_speed = 7.5 m/s`): drone flies a 2-cell-radius circle (visual) or teleport-pinned (headless), drain = `P_hover + k·v²`. Asserts depletion time = `(E_initial − E_cutoff) / (P_hover + k·v²)` within 0.5 %.
+2. **Cruise** (`v = max_speed = 9.0 m/s`): drone flies a 2-cell-radius circle (visual) or teleport-pinned (headless), drain = `P_hover + k·v²`. Asserts depletion time = `(E_initial − E_cutoff) / (P_hover + k·v²)` within 0.5 %.
 
-Reality check: the sim's hover endurance (12.24 min) lands inside the published F450 range of 12–15 min for our config ✓. The cruise endurance (10.40 min) sits **below** the inferred real-world range of 12–18 min — pessimistic by design (the `v²` monotone power model omits the translational-lift dip; see [`f450-reference.md` → Cruise (forward flight)](f450-reference.md#cruise-forward-flight)).
+Reality check: the sim's full-pack hover (17.0 min) sits at the top of the 14–17 min interpolated range for our 1.3 kg build (`P_hover` is mass-derived and FoM-calibrated to ~165 W at 1.3 kg — see [`battery-model.md` → Mass-aware hover power](battery-model.md)). The cutoff endurance (12.2 min) sits below the range by design — the 10 V cutoff trips with ~28 % reserve, so the spendable budget is smaller than the full pack. The cruise endurance (9.8 min at 9.0 m/s) sits below the 14–20 min inferred cruise range because the `v²` monotone power model omits the translational-lift dip. The hard physics check (`env.step` drain matches `(E_initial − E_cutoff) / P_inst` within 0.5 %) still passes; the published-range comparisons are informational.
 
 `--gui` opens a two-pane window with a `1× / 5× / 10× / 20×` speed slider:
 
 - **Phase 1 (HOVER)**: drone hovers in the arena center. Battery counter ticks down from 100 % to 0 % (where 0 % is the 10 V cutoff, not full discharge).
 - **Phase 2 (CRUISE)**: drone flies a 2-cell-radius circle at `max_speed`. Battery drains faster.
-- **Phase 3 (DONE)**: title locks at the side-by-side comparison `hover X min Y sec | cruise X min Y sec | F450 reference: hover 12-15 min (published) | cruise 12-18 min (inferred — sim pessimistic by design)`.
+- **Phase 3 (DONE)**: title locks at the side-by-side comparison `hover X min Y sec | cruise X min Y sec | F450 community ref: hover 14-17 min | cruise 14-20 min (inferred via translational-lift gain — sim cruise is pessimistic vs that bound by design)`.
 
 At 20× the slider compresses a 12-min sim hover into ~18 s real time.
 
@@ -58,9 +58,9 @@ python verification_scripts/test_distance.py --gui      # live distance accumula
 
 Four headless tests:
 
-1. **Tile scale**: `meters_per_cell == 5.0`. Derived F450 dimensions (sensor 7.5 m, max_speed 7.5 m/s, max_accel 12.5 m/s² ≈ 1.3 g, drone radius 0.25 m).
+1. **Tile scale**: `meters_per_cell == 5.0`. Derived F450 dimensions (sensor 7.5 m, max_speed 9.0 m/s, max_accel 12.5 m/s² ≈ 1.3 g, drone radius 0.25 m).
 2. **Linear distance**: 100 steps at constant velocity → path length = displacement = `v · t · m_per_cell` exactly (Δ < 0.01 %).
 3. **Sensor footprint**: cell-discretized disc area within ±30 % of continuous `π · r²`. At r = 1.5 cells = 7.5 m, 9 cells × 25 m²/cell = 225 m² vs continuous 176.7 m² — discretization-dominated, but the *units* line up.
-4. **Range to cutoff**: drone at `max_speed` until battery cutoff. Asserts total distance = `cruise_endurance × max_speed × m_per_cell` (Δ < 0.5 %, accounting for final-step cutoff clamp). Sim predicts **4.68 km** vs inferred real F450 5.4–8.1 km.
+4. **Range to cutoff**: drone at `max_speed` until battery cutoff. Asserts total distance = `cruise_endurance × max_speed × m_per_cell` (Δ < 0.5 %, accounting for final-step cutoff clamp). Sim predicts **5.27 km** at 9.0 m/s for the 1.3 kg default — pessimistic vs the 7.6–11.0 km community-inferred bound (= hover × translational-lift gain × cruise speed) because the sim's `v²` model omits the lift dip.
 
-`--gui` shows the cruise-to-cutoff distance accumulation in real time: drone flies a 2-cell circle at `max_speed`, the figure suptitle shows running counters for elapsed time, distance covered (m and % of expected total), and battery % remaining. Final state title shows `range traveled: X.XX km` + the inferred F450 reference range.
+`--gui` shows the cruise-to-cutoff distance accumulation in real time: drone flies a 2-cell circle at `max_speed`, the figure suptitle shows running counters for elapsed time, distance covered (m and % of expected total), and battery % remaining. Final state title shows `range traveled: X.XX km` alongside the community-inferred F450 reference range.

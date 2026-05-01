@@ -18,21 +18,9 @@ It has two halves: an **optimization** part that decides how drones move or spli
 
 ## Prototype Drone
 
-The simulator is calibrated to the actual hardware this project flies (**[Hawk's Work F450](https://www.hawks-work.com/pages/f450-drone)**).
+The simulator is calibrated to the actual hardware this project flies (**[Hawk's Work F450](https://www.hawks-work.com/pages/f450-drone)**) — a 1.3 kg quadcopter with a Pixhawk 2.4.8 flight controller, a 3S 4200 mAh LiPo, and a forward-facing STEEReoCAM Nano stereo camera.
 
-| Component | Spec | Mass |
-|---|---|---|
-| Frame | Hawk's Work F450, 450 mm wheelbase, clone of DJI Flame Wheel F450 — same airframe class | 280 g |
-| Motors | 4× A2212 920 KV brushless | 52 g each; 4× = 208 g |
-| ESCs | 4× 20 A brushless with 5 V / 1 A BEC | 17.9 g each; 4× = 71.6 g |
-| Battery | 11.1 V 3S LiPo, 4200 mAh, 25 C, XT60 | 330 g |
-| Props | 9450 self-tightening (CW + CCW) | 10 g each; 4× = 40 g |
-| Flight controller | Pixhawk 2.4.8, PX4 autopilot | 15.8g |
-| Camera | e-con Systems **STEEReoCAM Nano**, **forward-facing fixed-mount** (no gimbal — drone yaws to redirect). 2× OV2311 stereo, 4.3 mm f/2.8 M12 lens, HFOV 54° / VFOV 49.5°, 0.95–8 m stereo depth range, on-board 6-axis IMU. | 159 g |
-| Companion | NVIDIA Jetson Nano | 178 g |
-| Total mass | ~1.3 kg | Project calibration value; not a component mass |
-
-Full reference numbers (hover times, cruise / range estimates, calibration sources) live in [`docs/f450-reference.md`](docs/f450-reference.md).
+Full hardware breakdown (per-component masses, camera geometry, battery options, hover times, cruise / range estimates, calibration sources) lives in [`docs/f450-reference.md`](docs/f450-reference.md).
 
 ---
 
@@ -44,8 +32,8 @@ Detailed docs live in [`docs/`](docs/) — each focused on one topic:
 |---|---|
 | [`docs/setup.md`](docs/setup.md) | Install, system deps for `--gui` on Linux/WSL, demo run modes, all CLI flags, map editor, outputs layout. |
 | [`docs/simulation-model.md`](docs/simulation-model.md) | Coordinate frame, world scale (5 m/cell), per-step flow, drone dynamics, wall collision, coverage and visit-count metrics, intentional gaps to Isaac. |
-| [`docs/battery-model.md`](docs/battery-model.md) | Energy bookkeeping (`P = P_hover + k·v²`), unit conversions and equation sources, voltage cutoff, calibration, worked example. |
-| [`docs/f450-reference.md`](docs/f450-reference.md) | Real-world F450 references: 3S/4S battery options, published hover times, inferred cruise endurance and range, max forward speed. |
+| [`docs/battery-model.md`](docs/battery-model.md) | Energy bookkeeping (`P = P_hover + k·v²`), mass-aware hover power derivation, unit conversions and equation sources, voltage cutoff, calibration, worked example. |
+| [`docs/f450-reference.md`](docs/f450-reference.md) | Real-world F450 references: 3S/4S battery options, hover/cruise/range direct calculations (mass-aware), max forward speed, community-data sanity checks. |
 | [`docs/verification.md`](docs/verification.md) | The three verification scripts (`test_overlap`, `test_flight_time`, `test_distance`) — what each asserts, how to run headless or `--gui`. |
 
 ---
