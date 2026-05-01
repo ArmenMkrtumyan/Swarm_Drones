@@ -55,6 +55,8 @@ For the F450 defaults this gives:
 
 This is **deliberately conservative**. Real LiPo discharge has a steep drop near full, a long plateau around 3.7 V/cell, and a sharp knee near empty — not the straight line we use. A real 3S pack hits 10 V at ~5–10% remaining; our linear model trips the cutoff much earlier (~28% remaining). That's the safer side to err on for swarm planning. To delay the cutoff (riskier, more usable capacity), lower `min_voltage_v` (e.g., 9.5 V); to be more cautious, raise it (e.g., 10.5 V).
 
+> **Note on the 3D bridge.** The Isaac/SITL bridge does **not** model voltage sag or non-linear LiPo discharge at all — `K_THRUST` is calibrated once at sim start and stays constant for the whole flight. Late-flight maneuverability is therefore artificially preserved in 3D sim. The safety net is ArduPilot's `FS_BATT_VOLTAGE` failsafe, which triggers RTL/LAND on its own. If you want to model thrust loss vs. voltage in 3D later, scale `K_THRUST_eff = K_THRUST · (V_now / V_fresh)²` per step, reading `BATTERY_STATUS` from MAVLink.
+
 **Visual indicator.** Depleted drones render in **gray** with a `☠` next to their label, and their row in the battery panel is tagged `[DEAD]`. The simulation continues so other drones can keep operating.
 
 ## Where the unit conversions come from
@@ -91,6 +93,8 @@ P_total = P_induced(v)  +  P_profile(v)  +  P_parasitic(v)
 Our model captures only the `v²` (profile) term, which is dominant in the speed regime we exercise (`max_speed = 7.5 m/s`). The `v³` term would matter more if `max_speed` were raised toward the F450's true ceiling. The translational-lift dip is **deliberately ignored** so the cost is monotone — useful for optimization, slightly pessimistic at moderate cruise.
 
 If a future controller starts gaming the missing translational-lift dip (sitting at 5–7 m/s to "save" power that real drones do save), swap `k · v²` for the full Liu/Bauersfeld closed form.
+
+> **Note on the 3D bridge.** The Isaac/SITL bridge in `my_drone_simulation/Nvidia_SITL_connecter.py` *does* model the translational-lift bonus (a Gaussian per-motor thrust gain peaking +15 % at 7 m/s). That's because the 3D side cares about realism for sim-to-real transfer, while 2D needs a monotone cost for optimization. **Don't propagate the 3D lift model back into this 2D energy formula** — it'd reintroduce the dip the optimizer is meant not to see. See [`simulation-model.md` → Intentionally omitted](simulation-model.md#intentionally-omitted-in-2d-gap-to-isaac--3d-bridge) for the full 2D-vs-3D contract.
 
 ### Calibration check
 

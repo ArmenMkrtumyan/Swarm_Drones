@@ -180,7 +180,7 @@ PWM_MAX = 2000.0
 # under load (real motors lose ~25% of no-load RPM with prop attached).
 # Was previously 1000 (overestimate).
 OMEGA_MAX_RAD_S = 800.0
-MOTOR_TIME_CONSTANT_S = 0.03        # first-order response from commanded to actual omega
+MOTOR_TIME_CONSTANT_S = 0.05        # first-order response from commanded to actual omega; was 0.03 (optimistic — real A2212+ESC respond in 30-100ms; 0.05 is mid-range and safer for sim-to-real transfer of attitude gains)
 K_TORQUE_OVER_K_THRUST = 0.02       # reaction-torque / thrust ratio (m); ~0.02 for 8–10" props
 
 # Reaction-torque sign per motor, applied as K_Q * omega² * MOTOR_SPIN_DIR
@@ -207,6 +207,33 @@ MOTOR_POS_REL_BASE = np.array([
     [-MOTOR_ARM_LENGTH, +MOTOR_ARM_LENGTH, 0.0],  # FL
     [+MOTOR_ARM_LENGTH, -MOTOR_ARM_LENGTH, 0.0],  # RR
 ], dtype=np.float64)
+
+# =========================================================
+# AERODYNAMIC MODEL (translational drag + translational lift + ground effect)
+# =========================================================
+# Quadratic body drag: F_drag = -K_DRAG * v * |v| applied at composite COM.
+# Calibrated so vertical terminal velocity ≈ 22 m/s for the F450 at 1.365 kg
+# (m·g = K_DRAG · v_term²  →  K_DRAG ≈ 13.4 / 22² ≈ 0.028 N·s²/m²).
+# Isotropic for now — F450 has slightly more frontal drag when pitched forward
+# but this first-pass single coefficient captures the dominant effect.
+K_DRAG = 0.028
+
+# Translational lift bonus in forward flight (Bauersfeld & Scaramuzza, 2021):
+# multirotors gain ~10-20% thrust efficiency at 5-9 m/s as rotors enter clean
+# air. Modeled as a Gaussian on per-motor thrust centered at PEAK_SPEED.
+TRANS_LIFT_PEAK_GAIN = 0.15        # max bonus at peak speed
+TRANS_LIFT_PEAK_SPEED = 7.0        # m/s, dip center for F450
+TRANS_LIFT_WIDTH = 4.0             # m/s, Gaussian sigma — falloff width
+
+# Ground effect: per-rotor thrust enhancement when rotor altitude AGL drops
+# below ~1 rotor diameter. Approximation: T_eff = T * (1 + GAIN · (1 - z/D)²)
+# for z < D, else T. Assumes flat ground at world Z = GROUND_REFERENCE_Z.
+GROUND_EFFECT_DIAM = 0.239         # m, 9450 prop diameter
+GROUND_EFFECT_GAIN = 0.10          # peak +10% boost at z=0
+ROTOR_Z_IN_BODY = 0.023            # m, rotor offset above base_link (body frame)
+GROUND_REFERENCE_Z = 0.0           # m, world Z of "ground" — flat-ground
+                                   # assumption; for accurate AGL on uneven
+                                   # terrain, raycast downward instead.
 
 # =========================================================
 # GLOBALS
@@ -709,10 +736,46 @@ async def setup_bridge():
         per_motor_thrust = K_THRUST * omega_sq                         # N per motor, along local +Z
         per_motor_yaw_torque = K_TORQUE * omega_sq * MOTOR_SPIN_DIR    # N·m per motor, about local +Z
 
+        # -------------------------------------------------
+        # 4a) Aerodynamic effects: translational drag + lift + ground effect
+        # -------------------------------------------------
+        # Body-frame velocity (world velocity rotated into body frame).
+        vel_body = R_world_body.T @ vel_world
+
+        # Translational lift: per-motor thrust gets a Gaussian bonus around the
+        # F450's translational-lift sweet spot near 7 m/s. Affects both thrust
+        # along body +Z AND derived roll/pitch torques (since they're computed
+        # from per_motor_thrust below).
+        v_horizontal = float(math.sqrt(vel_body[0] * vel_body[0] + vel_body[1] * vel_body[1]))
+        lift_factor = 1.0 + TRANS_LIFT_PEAK_GAIN * math.exp(
+            -((v_horizontal - TRANS_LIFT_PEAK_SPEED) ** 2) / (2.0 * TRANS_LIFT_WIDTH * TRANS_LIFT_WIDTH)
+        )
+        per_motor_thrust = per_motor_thrust * lift_factor
+
+        # Ground effect: per-rotor altitude AGL determines individual thrust
+        # boost. Computed per-rotor so a tilted drone gets asymmetric ground
+        # effect (one rotor closer to ground than another).
+        for i in range(4):
+            rotor_pos_body = np.array(
+                [MOTOR_POS_REL_BASE[i, 0], MOTOR_POS_REL_BASE[i, 1], ROTOR_Z_IN_BODY],
+                dtype=np.float64,
+            )
+            rotor_world_z = pos_world[2] + (R_world_body @ rotor_pos_body)[2]
+            agl = rotor_world_z - GROUND_REFERENCE_Z
+            if agl < GROUND_EFFECT_DIAM:
+                gnd_factor = 1.0 + GROUND_EFFECT_GAIN * (1.0 - max(0.0, agl) / GROUND_EFFECT_DIAM) ** 2
+                per_motor_thrust[i] *= gnd_factor
+
+        # Translational drag: quadratic in body-frame velocity, applied at
+        # composite COM as a body-frame force. Adds no torque (applied at COM).
+        speed_body = float(np.linalg.norm(vel_body))
+        F_drag_body = -K_DRAG * vel_body * speed_body  # vector, body frame
+
         # Do not apply forces before home lock
         if not home_locked:
             per_motor_thrust[:] = 0.0
             per_motor_yaw_torque[:] = 0.0
+            F_drag_body[:] = 0.0
 
         # -------------------------------------------------
         # 4b) Apply single wrench to the articulation root (base_link) AT the
@@ -726,7 +789,12 @@ async def setup_bridge():
         # -------------------------------------------------
         try:
             F_total_z = float(np.sum(per_motor_thrust))
-            total_force = np.array([[0.0, 0.0, F_total_z]], dtype=np.float32)
+            # Body-frame force = (drag_x, drag_y, drag_z + thrust_z). Drag
+            # opposes velocity in all 3 body axes; thrust adds along +Z only.
+            total_force = np.array(
+                [[float(F_drag_body[0]), float(F_drag_body[1]), float(F_drag_body[2]) + F_total_z]],
+                dtype=np.float32,
+            )
 
             dx = MOTOR_POS_REL_BASE[:, 0] - com_local_base[0]
             dy = MOTOR_POS_REL_BASE[:, 1] - com_local_base[1]

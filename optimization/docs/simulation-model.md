@@ -155,19 +155,28 @@ These are entry-count metrics, not set membership, so a drone walking 20 cells o
 
 The visit-count model is verified by [`verification_scripts/test_overlap.py`](verification.md#test_overlappy).
 
-## Intentionally omitted (gap to Isaac)
+## Intentionally omitted in 2D (gap to Isaac / 3D bridge)
 
-The 2D model leaves out everything that doesn't change algorithmic feasibility:
+The 2D model leaves out everything that doesn't change algorithmic feasibility. Each effect below is tagged with its status in the 3D Isaac bridge (`my_drone_simulation/Nvidia_SITL_connecter.py`) so the 2D-vs-3D contract is explicit:
 
-- attitude / tilt dynamics (a real quad must tilt to translate; here velocity is direct)
-- aerodynamic drag and rotor wake interactions
-- actuator delay and motor lag
-- IMU / GPS noise, EKF lag
-- wind disturbance
-- battery sag (transient voltage drop under load) and the actual non-linear LiPo discharge curve — we use a linear `V(E)` approximation only for the voltage cutoff threshold (see [battery-model.md](battery-model.md))
-- altitude — everything is at one height; no 3D sensor footprint
+| Effect | 2D | 3D bridge |
+|---|---|---|
+| Attitude / tilt dynamics (a real quad must tilt to translate) | omitted — velocity is direct | ✓ PhysX articulation + per-motor thrust torques |
+| Aerodynamic drag | omitted | ✓ quadratic body drag, `K_DRAG = 0.028 N·s²/m²` |
+| Translational lift (5–9 m/s sweet spot) | **deliberately omitted** — keeps energy cost monotone-in-speed for the optimizer (see [battery-model.md → Why `v²` and not `v³`](battery-model.md#why-v²-and-not-v³)) | ✓ per-motor Gaussian thrust bonus, peak +15 % near 7 m/s (Bauersfeld & Scaramuzza 2021) |
+| Ground effect | omitted — no altitude | ✓ per-rotor boost when AGL < rotor diameter (≈ 0.24 m) |
+| Actuator / motor lag | omitted | ✓ first-order lag, `MOTOR_TIME_CONSTANT_S = 0.05 s` |
+| IMU / GPS noise, EKF lag | omitted | ✓ via ArduPilot SITL's EKF + simulated sensors |
+| Wind disturbance | omitted | omitted |
+| Battery voltage sag (transient drop under load + non-linear LiPo discharge) | linear `V(E)` only, for cutoff threshold (see [battery-model.md](battery-model.md)) | **omitted** — `K_THRUST` constant for whole flight; ArduPilot's `FS_BATT_VOLTAGE` failsafe is the safety net |
+| Altitude / 3D sensor footprint | flattened to horizontal wedge (HFOV/2 = 27°, range 1.6 cells = 8 m); see [f450-reference.md](f450-reference.md) | ✓ full stereo camera, 8 m depth range, 54° × 49.5° FOV |
+| Rotor wake interactions | omitted | omitted |
+| Rotor blade flapping (high-speed regime) | n/a | omitted |
+| Motor saturation (current/ESC limit before theoretical max ω) | n/a | omitted |
 
 These are the gaps that make 2D **falsification but not validation**: a controller that fails here will fail in Isaac; a controller that works here may still need re-tuning once these effects appear.
+
+**Don't propagate translational lift from 3D back into 2D.** The 2D energy cost must remain monotone in speed for the optimizer to be well-behaved — that's the whole reason it's omitted from 2D, not an oversight. If you ever want lift in 2D for some reason, take a hard look at what optimization invariant breaks and decide explicitly.
 
 [src-euler-wiki]: https://en.wikipedia.org/wiki/Euler_method
 [src-euler-game]: https://gafferongames.com/post/integration_basics/
