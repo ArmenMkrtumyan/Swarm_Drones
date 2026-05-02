@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (0.005469503347828046, -4.846180036742688, 3.7689005776954136)
-                double3 target = (0.13879718680535982, 16.30915337779238, -7.3404110760194605)
+                double3 position = (5, 5, 5)
+                double3 target = (-14.61291654369509, 6.062527552857567, -12.106280263533627)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -18,7 +18,7 @@
                 double3 position = (0, 0, 5)
                 double radius = 5
             }
-            string boundCamera = "/OmniverseKit_Persp"
+            string boundCamera = "/World/hawks_work_f450_jetsonnano_steereocam/right_camera_frame/right_camera_mount/right_camera"
         }
         dictionary omni_layer = {
             string authoring_layer = "./500mAUA_drone.usd"
@@ -85,8 +85,6 @@ def Xform "World"
                 def Camera "left_camera"
                 {
                     float2 clippingRange = (0.01, 10000000)
-                    # STEEReoCAM Nano spec (per docs/f450-reference.md):
-                    # focal=4.3mm, sensor 4.857×3.956mm → HFOV 54°, VFOV 49.5°
                     float focalLength = 4.3
                     float focusDistance = 400
                     float horizontalAperture = 4.382
@@ -107,16 +105,6 @@ def Xform "World"
                 doc = "Name override for prim lookup in base name search"
             )
 
-            # NOTE for future investigation: right camera mount orient and
-            # right_camera translate were previously authored as
-            #   mount.orient = (0.7071, 0.7071, 0, 0) (90° about X)
-            #   right_camera.translate = (-3.6346, 3.4147, 0.248) m (3.6 m offset!)
-            # which produced a stereo baseline orders of magnitude wrong vs the
-            # STEEReoCAM Nano's 100 mm spec (docs/f450-reference.md). Reset to
-            # mirror the left-camera mount + small +X offset for a clean 100 mm
-            # baseline. Verify in Isaac that the rendered right view actually
-            # sits 100 mm to the right of the left view; if not, the mount/camera
-            # axis convention may need a different fix.
             def Xform "right_camera_mount"
             {
                 quatd xformOp:orient = (-0.5000000000000002, -0.5, 0.5, 0.5)
@@ -127,17 +115,15 @@ def Xform "World"
                 def Camera "right_camera"
                 {
                     float2 clippingRange = (0.01, 10000000)
-                    # STEEReoCAM Nano spec (per docs/f450-reference.md):
-                    # focal=4.3mm, sensor 4.857×3.956mm → HFOV 54°, VFOV 49.5°
                     float focalLength = 4.3
                     float focusDistance = 400
                     float horizontalAperture = 4.382
                     bool omni:kit:cameraLock = 0
-                    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.11527102199583833)
+                    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -2.565194193836038e-8)
                     float verticalAperture = 3.957
-                    quatd xformOp:orient = (0.9899181448460244, -0.13056802721838195, 0.05442901581146526, 0.007179067536989471)
+                    quatd xformOp:orient = (0.974099919446617, -0.22507934542097716, 0.021092242019192867, 0.0048736562827628475)
                     double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
-                    double3 xformOp:translate = (0.084815369124110898, -0.0017323649067140234, -0.008933874958776344)
+                    double3 xformOp:translate = (0.005748446044876052, 0.5291716550405541, 1.2041367884394962)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                 }
             }
@@ -201,13 +187,6 @@ def Xform "World"
                 )
             }
 
-            # Rotor joints intentionally have NO drives. The bridge applies
-            # thrust + yaw reaction torque directly to the motor links; if we
-            # also run a velocity drive on the rotor joints (Isaac authored
-            # damping=1000, targetVelocity=±30000 here at one point), the two
-            # actuation models compete and the drone tumbles within 1 s of
-            # takeoff. Leave these joints free-spinning. If Isaac re-authors
-            # drive overrides on save, delete them here again.
             over "front_left_rotor_joint"
             {
                 float drive:angular:physics:damping = 0
@@ -250,9 +229,6 @@ def Xform "World"
                 bool enabled = 1
                 int linearAccelerationFilterWidth = 1
                 int orientationFilterWidth = 1
-                # 1 kHz IMU rate — matches Pixhawk EKF input rate, also the SITL
-                # bridge's max consumption rate. Was previously 10 kHz which the
-                # downstream pipeline can't use anyway.
                 float sensorPeriod = 0.001
                 token visibility = "inherited"
                 quatd xformOp:orient = (1, 0, 0, 0)
@@ -280,6 +256,10 @@ def Xform "World"
 
         over "front_left_arm_link"
         {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
         }
 
         over "front_left_motor_link"
@@ -292,12 +272,22 @@ def Xform "World"
 
         over "front_left_rotor_link"
         {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
+
             def Cube "prop_blade"
             {
                 color3f[] primvars:displayColor = [(0.08, 0.08, 0.08)]
                 double size = 1
                 float3 xformOp:scale = (0.25, 0.02, 0.005)
                 uniform token[] xformOpOrder = ["xformOp:scale"]
+            }
+
+            over "visuals"
+            {
+                token visibility = "invisible"
             }
         }
 
@@ -307,6 +297,10 @@ def Xform "World"
 
         over "front_right_arm_link"
         {
+            string isaac:nameOverride (
+                displayName = "Name Override"
+                doc = "Name override for prim lookup in base name search"
+            )
         }
 
         over "front_right_motor_link"
@@ -326,6 +320,11 @@ def Xform "World"
                 double size = 1
                 float3 xformOp:scale = (0.25, 0.02, 0.005)
                 uniform token[] xformOpOrder = ["xformOp:scale"]
+            }
+
+            over "visuals"
+            {
+                token visibility = "invisible"
             }
         }
 
@@ -378,6 +377,11 @@ def Xform "World"
                 float3 xformOp:scale = (0.25, 0.02, 0.005)
                 uniform token[] xformOpOrder = ["xformOp:scale"]
             }
+
+            over "visuals"
+            {
+                token visibility = "invisible"
+            }
         }
 
         over "rear_right_arm_link"
@@ -396,6 +400,11 @@ def Xform "World"
                 double size = 1
                 float3 xformOp:scale = (0.25, 0.02, 0.005)
                 uniform token[] xformOpOrder = ["xformOp:scale"]
+            }
+
+            over "visuals"
+            {
+                token visibility = "invisible"
             }
         }
 
@@ -426,9 +435,6 @@ def Xform "World"
         normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)] (
             interpolation = "faceVarying"
         )
-        # boundingCube collapses the launchpad mesh to its AABB for physics.
-        # The Cube primitive is axis-aligned and exact under this approximation;
-        # much faster than full triangle-mesh contact resolution.
         uniform token physics:approximation = "boundingCube"
         bool physics:collisionEnabled = 1
         point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5)]
@@ -487,7 +493,7 @@ def "Render" (
                 no_delete = true
             )
             {
-                rel camera = </OmniverseKit_Persp>
+                rel camera = </World/hawks_work_f450_jetsonnano_steereocam/right_camera_frame/right_camera_mount/right_camera>
                 token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
                 token omni:rtx:background:source:type = "domeLight"
                 bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
@@ -534,7 +540,7 @@ def "Render" (
 
 over "OmniverseKit_Persp"
 {
-    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -23.895244580683524)
+    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -26.046502348781686)
     float verticalAperture = 20.955
     quatd xformOp:orient = (0.6607538461685181, 0.3007526397705078, 0.284900426864624, 0.6259264945983887)
     double3 xformOp:scale = (1, 1, 1)
@@ -566,15 +572,6 @@ over "OmniverseKit_Right"
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 }
 
-# NOTE for future investigation: physxScene:enableStabilization = 0 here
-# overrides the basefile_physics.usd value of 1. This is a PhysX SOLVER
-# feature (numerical stability of articulated rigid bodies under stress) —
-# it is NOT the same as ArduPilot/SITL attitude stabilization, and SITL
-# does not see it. Setting was inherited from earlier experimentation that
-# also disabled rotor-joint drives (see comment in /joints below); both
-# changes were made together to stop a takeoff-tumble issue. If you re-enable
-# this and the drone starts oscillating or drifting at hover, that's why.
-# Decide whether to keep it off or test re-enabling once flight is otherwise stable.
 def PhysicsScene "physicsScene" (
     prepend apiSchemas = ["PhysxSceneAPI"]
 )

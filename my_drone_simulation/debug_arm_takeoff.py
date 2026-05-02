@@ -285,39 +285,75 @@ def send_position_target(master, x, y, z, yaw=0.0):
 
 
 def takeoff_and_hold(master, alt, hold_s=15.0, climb_timeout=20.0, rate_hz=5):
-    """Fire NAV_TAKEOFF, then stream position targets continuously from t=0.
+    """Fire NAV_TAKEOFF, let ArduCopter's takeoff state machine run undisturbed,
+    THEN start streaming position targets once we've reached the target altitude.
 
-    The stream is what keeps GUIDED alive: if we wait for altitude before starting
-    the stream, the 3-second GUID_TIMEOUT expires during the climb and ArduPilot
-    drops throttle. Streaming from the start means GUIDED never idles.
+    Why two phases (and not stream-from-t=0):
+      ArduCopter's GUIDED mode runs a dedicated takeoff submode (SubMode::TakeOff)
+      after MAV_CMD_NAV_TAKEOFF. That submode owns the altitude target and ramps
+      throttle past the 90 % breakout that calls set_land_complete(false). If we
+      send SET_POSITION_TARGET_LOCAL_NED *during* the climb, ArduCopter's
+      set_pos_NED_m calls pos_control_start(), which unconditionally overwrites
+      guided_mode = SubMode::Pos — evicting takeoff before it can finish ramping.
+      pos_control_run then sees ap.land_complete still true and routes through
+      make_safe_ground_handling, clamping motors at MOT_SPIN_ARM (PWM ~1100). The
+      drone never lifts. (See ArduCopter takeoff.cpp:18-48, mode_guided.cpp:367,
+      mode.cpp:611-617, takeoff.cpp:113-180.)
+
+      GUID_TIMEOUT only fires while GUIDED has no active controller target;
+      during takeoff, the takeoff state machine IS the active target — no
+      stream needed. After takeoff completes, then we stream for position hold.
 
     Returns True if target altitude was reached, False on timeout.
     """
     takeoff(master, alt)
 
-    print(f"Streaming target (0, 0, {-alt:.1f}) NED @ {rate_hz}Hz "
-          f"throughout climb + {hold_s:.1f}s hold...")
     interval = 1.0 / rate_hz
     start = time.time()
     last_report = 0.0
     reached = False
     reached_t = None
 
-    while True:
+    print(f"Phase 1 (climb): waiting for ArduCopter takeoff state to lift drone "
+          f"to {alt:.1f}m. NOT streaming position targets (would override SubMode::TakeOff).")
+
+    while not reached:
         now = time.time()
         elapsed = now - start
-
-        if reached and (now - reached_t) >= hold_s:
-            print(f"Hold complete ({hold_s:.1f}s).")
-            return True
-        if not reached and elapsed >= climb_timeout:
+        if elapsed >= climb_timeout:
             print(f"Climb timeout after {climb_timeout:.0f}s — target alt never reached.")
             return False
 
-        # Stream the position target (this is the critical part)
+        # Drain telemetry. We don't send anything — let takeoff state run.
+        msg = master.recv_match(blocking=True, timeout=0.2)
+        if msg is None:
+            continue
+        mtype = msg.get_type()
+        if mtype == "GLOBAL_POSITION_INT":
+            alt_now = msg.relative_alt / 1000.0
+            if alt_now >= 0.95 * alt:
+                reached = True
+                reached_t = now
+                print(f"Reached target alt ({alt_now:.2f}m); switching to streamed "
+                      f"position hold for {hold_s:.1f}s...")
+            elif now - last_report >= 1.0:
+                print(f"[climb] t={elapsed:5.1f}s rel_alt={alt_now:.2f}m "
+                      f"vz={msg.vz/100.0:+.2f}m/s")
+                last_report = now
+        elif mtype == "STATUSTEXT":
+            print(f"STATUSTEXT: {msg.text}")
+
+    # Phase 2: NOW stream position-target for hold. Submode switches to Pos,
+    # which is what we want for stationary hover at altitude.
+    last_report = 0.0
+    while True:
+        now = time.time()
+        if (now - reached_t) >= hold_s:
+            print(f"Hold complete ({hold_s:.1f}s).")
+            return True
+
         send_position_target(master, 0.0, 0.0, -alt)
 
-        # Drain any telemetry that's arrived since last iteration
         for _ in range(20):
             msg = master.recv_match(blocking=False)
             if msg is None:
@@ -325,13 +361,8 @@ def takeoff_and_hold(master, alt, hold_s=15.0, climb_timeout=20.0, rate_hz=5):
             mtype = msg.get_type()
             if mtype == "GLOBAL_POSITION_INT":
                 alt_now = msg.relative_alt / 1000.0
-                if not reached and alt_now >= 0.95 * alt:
-                    reached = True
-                    reached_t = now
-                    print(f"Reached target alt ({alt_now:.2f}m); holding for {hold_s:.1f}s...")
                 if now - last_report >= 1.0:
-                    phase = "hold" if reached else "climb"
-                    print(f"[{phase}] t={elapsed:5.1f}s rel_alt={alt_now:.2f}m "
+                    print(f"[hold]  t={now-start:5.1f}s rel_alt={alt_now:.2f}m "
                           f"vz={msg.vz/100.0:+.2f}m/s")
                     last_report = now
             elif mtype == "STATUSTEXT":

@@ -151,14 +151,24 @@ MAX_SETTLE_GYRO = 0.10              # rad/s
 # =========================================================
 # ORIENTATION / FRAMES
 # =========================================================
-# The Hawks F450 body frame is RFU (+X=right, +Y=forward, +Z=up), verified from
-# motor-link positions. ArduPilot uses FRD (+X=forward, +Y=right, +Z=down).
-# T is also its own inverse (T²=I): handy because the same matrix also converts
-# ENU-aligned-to-initial-heading → NED for position/velocity below.
-T_RFU_TO_FRD = np.array([
-    [0.0, 1.0,  0.0],
-    [1.0, 0.0,  0.0],
-    [0.0, 0.0, -1.0],
+# The Hawks F450 body frame is FLU (+X=forward, +Y=left, +Z=up) — verified
+# from URDF-imported motor-link positions (CLAUDE.md §8). Older notes called
+# it RFU; that was wrong. ArduPilot uses FRD (+X=forward, +Y=right, +Z=down).
+# T_FLU_TO_FRD is diag(1, -1, -1): forward axis stays the same, Y (left↔right)
+# and Z (up↔down) flip. T² = I so it's its own inverse — handy because the
+# same matrix relabels home-aligned ENU → NED for position/velocity below.
+#
+# PRIOR BUG (2026-05-02): this was wrongly defined as RFU→FRD =
+#   [[0,1,0],[1,0,0],[0,0,-1]]
+# which swaps X↔Y on top of flipping Z. Applied to FLU body data, that
+# REPORTED PITCH AS ROLL and ROLL AS PITCH back to ArduPilot — every
+# attitude/gyro/accel/position the controller saw had roll and pitch swapped.
+# Fix verified by comparing bridge log to physical observation: drone
+# tipped LEFT, bridge logged as +roll (right-wing-down).
+T_FLU_TO_FRD = np.array([
+    [1.0,  0.0,  0.0],
+    [0.0, -1.0,  0.0],
+    [0.0,  0.0, -1.0],
 ], dtype=np.float64)
 
 # NED reference frame is anchored to the drone's initial orientation at home-lock.
@@ -184,28 +194,36 @@ MOTOR_TIME_CONSTANT_S = 0.05        # first-order response from commanded to act
 K_TORQUE_OVER_K_THRUST = 0.02       # reaction-torque / thrust ratio (m); ~0.02 for 8–10" props
 
 # Reaction-torque sign per motor, applied as K_Q * omega² * MOTOR_SPIN_DIR
-# about body +Z (RFU, +Z = up). Derivation:
+# about body +Z (FLU body, +Z = up). Derivation:
 #   A CCW prop (viewed from above) is pushed by the motor with +Z body torque;
 #   Newton's 3rd law puts the reaction on the body as -Z body torque (CW).
 # So CCW-prop motors use -1 here; CW-prop motors use +1.
 # Matches ArduPilot QuadX: pwm[0]=FR=CCW, pwm[1]=RL=CCW, pwm[2]=FL=CW, pwm[3]=RR=CW.
 MOTOR_SPIN_DIR = np.array([-1.0, -1.0, +1.0, +1.0], dtype=np.float32)
 
-# Thrust axis = body +Z in RFU (= world +Z at rest).
+# Thrust axis = body +Z in FLU (= world +Z at rest).
 MOTOR_THRUST_DIR_LOCAL = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 
-# Motor positions relative to base_link (RFU body), in meters. Same order as
-# MOTOR_LINK_PATHS: [FR, RL, FL, RR]. Verified from USD probe. These are used
-# to compute the net roll/pitch torque analytically so we can apply the entire
-# wrench (force + torque) to the articulation root (base_link) in one call.
-# This avoids subtle force-propagation quirks when applying per-motor thrust
-# to non-root bodies of a PhysX articulation.
-MOTOR_ARM_LENGTH = 0.159   # motor X/Y coord from base origin (= 225 mm half-diagonal / sqrt(2)); F450 has 450 mm motor-to-motor diagonal
+# Motor positions relative to base_link, in meters, in **FLU** body frame
+# (+X = forward, +Y = left, +Z = up). Same order as MOTOR_LINK_PATHS:
+# [FR, RL, FL, RR]. Verified from live USD probe (2026-05-02):
+#   FR (front-right): body (+0.159, -0.159, +0.008)
+#   RL (rear-left):   body (-0.159, +0.159, +0.008)
+#   FL (front-left):  body (+0.159, +0.159, +0.008)
+#   RR (rear-right):  body (-0.159, -0.159, +0.008)
+# Used to compute the net roll/pitch torque analytically so we can apply the
+# entire wrench (force + torque) to the articulation root (base_link) in one
+# call. PRIOR BUG: these constants were RFU-laid-out (matching the older note
+# that the body was RFU). The actual USD body frame is FLU, so the positions
+# were 90° off — this swapped roll↔pitch in the analytical torque, producing
+# the cross-coupled "drone slides sideways instead of moving forward" pattern.
+MOTOR_ARM_LENGTH = 0.159   # |x|, |y| coord from base origin (= 225 mm half-diagonal / sqrt(2)); F450 has 450 mm motor-to-motor diagonal
+ROTOR_OFFSET_Z = 0.008     # motor link Z offset above base_link origin (from USD probe)
 MOTOR_POS_REL_BASE = np.array([
-    [+MOTOR_ARM_LENGTH, +MOTOR_ARM_LENGTH, 0.0],  # FR: +X right, +Y forward
-    [-MOTOR_ARM_LENGTH, -MOTOR_ARM_LENGTH, 0.0],  # RL
-    [-MOTOR_ARM_LENGTH, +MOTOR_ARM_LENGTH, 0.0],  # FL
-    [+MOTOR_ARM_LENGTH, -MOTOR_ARM_LENGTH, 0.0],  # RR
+    [+MOTOR_ARM_LENGTH, -MOTOR_ARM_LENGTH, ROTOR_OFFSET_Z],  # FR: forward (+X), right (-Y)
+    [-MOTOR_ARM_LENGTH, +MOTOR_ARM_LENGTH, ROTOR_OFFSET_Z],  # RL: rear   (-X), left  (+Y)
+    [+MOTOR_ARM_LENGTH, +MOTOR_ARM_LENGTH, ROTOR_OFFSET_Z],  # FL: forward (+X), left  (+Y)
+    [-MOTOR_ARM_LENGTH, -MOTOR_ARM_LENGTH, ROTOR_OFFSET_Z],  # RR: rear   (-X), right (-Y)
 ], dtype=np.float64)
 
 # =========================================================
@@ -327,14 +345,26 @@ def compute_composite_com_local_base(stage, robot_root: str):
 
     def _world_rot(prim):
         # Upper-left 3x3 of Gf.Matrix4d. USD stores row-major with row-vector
-        # semantics (v' = v * M), so the rotation part's columns are the body
-        # axes expressed in world. Reading m[i][j] directly into R[i,j] keeps
-        # that convention; to convert world -> body we multiply by R.T later.
+        # semantics (v_world = v_body * M), so the *rows* of M are the body
+        # axes in world (not columns). To get a standard column-vector
+        # rotation matrix R such that R @ v_body = v_world, we have to
+        # TRANSPOSE on read: R[i,j] = m[j][i]. Then standard NumPy column-
+        # vector conventions apply for R @, R.T @, etc.
+        #
+        # PRIOR BUG (2026-05-02): this used to read R[i,j] = m[i][j], which
+        # silently treated USD's row-vec matrix as a column-vec rotation —
+        # equivalent to using M instead of M^T. Result: every CoM and rotated
+        # vector came out with X and Y signs flipped. Bridge reported the
+        # composite CoM as -8.8 mm rearward when it's actually +8.8 mm
+        # forward → analytical wrench applied at mirror-image point and
+        # with opposite-sign pitch torque. That's why the drone kept drifting
+        # forward despite controller corrections — the controller was
+        # commanding the right thing, the bridge was applying the wrong sign.
         m = _world_mat(prim)
         R = np.empty((3, 3), dtype=np.float64)
         for i in range(3):
             for j in range(3):
-                R[i, j] = m[i][j]
+                R[i, j] = m[j][i]
         return R
 
     base_wpos = _world_pos(base_prim)
@@ -661,9 +691,9 @@ async def setup_bridge():
                     imu_reading.lin_acc_z,
                 ], dtype=np.float64)
 
-                # Body RFU (Isaac) -> Body FRD (ArduPilot). Same matrix for gyro and accel.
-                gyro_body = T_RFU_TO_FRD @ imu_ang
-                accel_body = T_RFU_TO_FRD @ imu_acc
+                # Body FLU (Isaac) -> Body FRD (ArduPilot). Same matrix for gyro and accel.
+                gyro_body = T_FLU_TO_FRD @ imu_ang
+                accel_body = T_FLU_TO_FRD @ imu_acc
             else:
                 if not imu_warned_invalid:
                     print("WARNING: IMU reading invalid. Check IMU_SENSOR_PATH.")
@@ -675,27 +705,27 @@ async def setup_bridge():
             speed = float(np.linalg.norm(vel_world))
             gyro_norm = float(np.linalg.norm(gyro_body))
 
-            # R_world_body in Isaac conventions (body RFU, world Z-up).
+            # R_world_body in Isaac conventions (body FLU, world Z-up).
             R_world_body = quat_wxyz_to_rot(quat_world)
 
             # Express body orientation relative to the drone's initial attitude at home.
             # R_rel is body-at-now in the drone's initial body-frame coordinates.
             R_rel = home_R0_world_body.T @ R_world_body
 
-            # Body-RFU-in-initial-frame  ->  Body-FRD-in-NED
-            R_ned_body_frd = T_RFU_TO_FRD @ R_rel @ T_RFU_TO_FRD
+            # Body-FLU-in-initial-frame  ->  Body-FRD-in-NED
+            R_ned_body_frd = T_FLU_TO_FRD @ R_rel @ T_FLU_TO_FRD
 
             roll, pitch, yaw = rot_to_rpy_zyx(R_ned_body_frd)
             heading_deg = (math.degrees(yaw) + 360.0) % 360.0
 
-            # World-frame vectors: rotate into the drone's initial body frame (RFU),
+            # World-frame vectors: rotate into the drone's initial body frame (FLU),
             # then relabel axes to NED.
             rel_world = pos_world - home_pos_world
             pos_init = home_R0_world_body.T @ rel_world
             vel_init = home_R0_world_body.T @ vel_world
 
-            pos_ned = T_RFU_TO_FRD @ pos_init
-            vel_ned = T_RFU_TO_FRD @ vel_init
+            pos_ned = T_FLU_TO_FRD @ pos_init
+            vel_ned = T_FLU_TO_FRD @ vel_init
 
         except Exception as e:
             print("State/read error:", repr(e))
@@ -778,14 +808,43 @@ async def setup_bridge():
             F_drag_body[:] = 0.0
 
         # -------------------------------------------------
-        # 4b) Apply single wrench to the articulation root (base_link) AT the
-        # composite COM. Motor thrusts are (0, 0, F_i) at positions
-        # (x_i, y_i, 0) in body RFU; torque about the COM is:
-        #   torque_i = (r_i - com) × F_i
-        #            = ((y_i - com_y) F_i, -(x_i - com_x) F_i, 0)
-        # Applying the aggregated force *at* com_local_base means PhysX adds no
-        # extra lever-arm term from the application-point-vs-COM gap, so a
-        # symmetric collective produces zero net roll/pitch torque.
+        # 4b) Apply single wrench to the articulation root (base_link) at
+        # the COMPOSITE drone CoM (com_local_base in base_link frame). Motor
+        # thrusts F_i act along body +Z at motor positions (x_i, y_i, 0);
+        # the analytical torque about base_link origin is:
+        #   torque_i = r_i × F_i = (y_i F_i, -x_i F_i, 0)
+        # which we apply as a pure couple (translation-invariant for the
+        # composite system).
+        #
+        # WHY APPLY FORCE AT COMPOSITE CoM (not base_link origin):
+        # The forward CoM offset (~+9 mm) means gravity at the composite CoM
+        # and thrust at base_link origin have a +0.12 N·m nose-down lever
+        # that has to be fought by the controller's I-term. In a real F450
+        # this is a real disturbance the controller learns to balance. In
+        # SIM during the takeoff transient (~1 s), the I-term doesn't have
+        # time to wind up before the drone tilts to ±20°+ pitch, after
+        # which it's in a divergent regime that no gain set has tamed.
+        # By applying total force at composite CoM, the lever arm goes to
+        # zero and the simulated drone is physically balanced at hover.
+        # The controller still has to reject roll/pitch/yaw disturbances,
+        # but no longer fights a steady-state forward-CoM trim.
+        #
+        # SIM-TO-REAL caveat: this REMOVES the forward-CoM trim from the
+        # sim. A controller tuned here will not know to wind up I-term for
+        # the real F450's nose-down tendency. For sim-to-real transfer,
+        # re-introduce the trim as an EXPLICIT feedforward torque on the
+        # body (not as a side effect of force application point) so it can
+        # be toggled / scaled / measured cleanly.
+        #
+        # PRIOR ATTEMPT (2026-05-02): force applied at com_local_base AND
+        # dx/dy referenced against com_local_base. The double change made
+        # the analytical tau and PhysX's lever-arm moment cancel on
+        # base_link, but the COMPOSITE drone behavior was the same as
+        # leaving both at origin (verified by re-deriving). Author at the
+        # time concluded "drone behaved balanced" was wrong (vs. expected
+        # forward-CoM trim) and reverted. We're now intentionally choosing
+        # the balanced-sim path. Only `positions` is changed; tau is still
+        # computed about origin.
         # -------------------------------------------------
         try:
             F_total_z = float(np.sum(per_motor_thrust))
@@ -796,17 +855,24 @@ async def setup_bridge():
                 dtype=np.float32,
             )
 
-            dx = MOTOR_POS_REL_BASE[:, 0] - com_local_base[0]
-            dy = MOTOR_POS_REL_BASE[:, 1] - com_local_base[1]
-            tau_x = float(np.sum(dy * per_motor_thrust))   # (y_i - com_y) * F_i
-            tau_y = float(np.sum(-dx * per_motor_thrust))  # -(x_i - com_x) * F_i
+            # Torque about base_link ORIGIN (not composite COM): use motor
+            # positions directly with no CoM subtraction.
+            dx = MOTOR_POS_REL_BASE[:, 0]
+            dy = MOTOR_POS_REL_BASE[:, 1]
+            tau_x = float(np.sum(dy * per_motor_thrust))   # y_i * F_i
+            tau_y = float(np.sum(-dx * per_motor_thrust))  # -x_i * F_i
             tau_z = float(np.sum(per_motor_yaw_torque))
             total_torque = np.array([[tau_x, tau_y, tau_z]], dtype=np.float32)
 
-            positions = np.array(
-                [[com_local_base[0], com_local_base[1], com_local_base[2]]],
-                dtype=np.float32,
-            )
+            # Apply at the COMPOSITE drone CoM (computed at calibration).
+            # PhysX adds a lever-arm moment (com - base_link_CoM_at_origin) × F
+            # to base_link's torque, but the COMPOSITE drone's net torque
+            # about its CoM is zero because the force passes through the
+            # composite CoM. Constraint forces between links absorb the
+            # base_link-only stress.
+            positions = np.array([[float(com_local_base[0]),
+                                   float(com_local_base[1]),
+                                   float(com_local_base[2])]], dtype=np.float32)
 
             base.apply_forces_and_torques_at_pos(
                 forces=total_force,

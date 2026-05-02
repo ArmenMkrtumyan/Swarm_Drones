@@ -1,11 +1,12 @@
 # SITL parameter baseline — KNOWN-GOOD reference config.
 #
-# This is the snapshot from the REFERENCE_first_real_flight_20260430_202605
-# session: drone took off cleanly, climbed to ~16 m, oscillated ±10° in pitch
-# but stayed upright and bounded. It is NOT a clean hover yet — autotune is
-# still required to refine the gains — but it represents the "confirmed
-# floating-base + collisions + sensor IDs all working" baseline that future
-# experimental runs should regress to whenever a tweak goes wrong.
+# Anchored to 2026-05-02 hover tests on the corrected 1.365 kg / T/W 1.82
+# build (post per-component mass audit + new aero model). Rate gains
+# 0.03 P/I, 0.006 D produced the best result so far: drone airborne >50 s
+# with bounded ±20° oscillation. NOT a clean hover yet — AUTOTUNE is the
+# next step, not more manual tuning. Older 0.10 P/I gains were tuned for
+# the obsolete 1.96 kg / 4:1 T/W build and are too hot for the current
+# dynamics. See inline tuning-history comment near the ATC_RAT_* block.
 #
 # Promote a new config to this file ONLY after a flight is verified to fly
 # stably. To revert: cp sitl_params_best.parm sitl_params_test.parm.
@@ -31,11 +32,11 @@ SIM_GPS1_HDOP 70
 # Relax the hard GPS-quality threshold that gates Loiter/Auto arming.
 GPS_HDOP_GOOD 230
 
-# Hover-throttle prior — real F450 4S/920kv setups converge here.
-MOT_THST_HOVER 0.5
+# Hover-throttle prior — real F450 3S/920kv setups converge here.
+MOT_THST_HOVER 0.55
 
 # Cap guided takeoff climb rate to 1.5 m/s (default 2.5 m/s builds too much
-# upward momentum for the 1.96 kg drone to arrest cleanly at target alt).
+# upward momentum for the 1.365 kg drone to arrest cleanly at target alt).
 WPNAV_SPEED_UP 150
 WPNAV_ACCEL_Z 100
 PILOT_SPEED_UP 150
@@ -51,16 +52,25 @@ DISARM_DELAY 60
 TERRAIN_ENABLE 0
 WPNAV_RFND_USE 0
 
-# Rate gains for our 1.96 kg + forward-CoM build. Default 0.135 over-corrects,
-# 0.05 under-corrects (drone tips faster than controller responds). 0.10 is
-# the proven "wiggly but flying" baseline. Real F450-with-stereocam owners
-# would land in the same neighborhood — these transfer.
-ATC_RAT_RLL_P 0.10
-ATC_RAT_RLL_I 0.10
-ATC_RAT_PIT_P 0.10
-ATC_RAT_PIT_I 0.10
-# ATC_RAT_*_D left at defaults (0.0036) — bumping to 0.008 over-damped the
-# corrective response and let the drone settle into a sustained 30° lean.
+# Rate gains — back to the best-known baseline for the post-bridge-fix
+# drone. Tuning history exhausted (2026-05-02):
+#   - 0.10 P/I, default D, default ANG: pitch rate hit ±396°/s, drone
+#     barely lifted off — gains way too hot for the lighter / smaller-arm
+#     dynamics, even with the bridge fix in place.
+#   - 0.03 P/I, 0.006 D, default ANG: BEST so far. Drone airborne >50 s,
+#     bounded oscillation ±20°, eventual slow degradation. This is where
+#     AUTOTUNE should start from.
+#   - Various intermediates (D=0.008, 0.010, ATC_ANG=3.0, 2.0) all moved
+#     us away from this baseline.
+# Returning to the best, full stop. AUTOTUNE is the next step, not more
+# manual tuning.
+ATC_RAT_RLL_P 0.03
+ATC_RAT_RLL_I 0.03
+ATC_RAT_PIT_P 0.03
+ATC_RAT_PIT_I 0.03
+ATC_RAT_RLL_D 0.006
+ATC_RAT_PIT_D 0.006
+# ATC_ANG_*_P left at firmware default (4.5).
 
 # AUTOTUNE setup, used after we have a stable hover from these baseline gains.
 AUTOTUNE_AXES 7
