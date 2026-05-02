@@ -253,6 +253,29 @@ GROUND_REFERENCE_Z = 0.0           # m, world Z of "ground" — flat-ground
                                    # assumption; for accurate AGL on uneven
                                    # terrain, raycast downward instead.
 
+# Aerodynamic angular damping: τ_damp = -ANG_DAMPING * ω_body. Added
+# 2026-05-02 (was previously claimed in CLAUDE.md but never actually wired
+# into the bridge — verified absent before this commit).
+# Values chosen to match Bauersfeld/Scaramuzza-style F450 modeling:
+# real props at hover have significant rotational drag (each rotating prop
+# acts as a viscous brake on body roll/pitch); body aerodynamic damping
+# adds more. Without it, sim was operating at the edge of controller
+# stability — small EKF/timing variations made some flights tumble while
+# others hovered with the same gains.
+ANG_DAMPING = (0.05, 0.05, 0.04)   # N·m / (rad/s) for roll, pitch, yaw
+                                   # Yaw bumped from 0.015 -> 0.04 on
+                                   # 2026-05-02 evening: with the lower
+                                   # value, yaw drift during ALT_HOLD
+                                   # entry was ~25°/s for several seconds
+                                   # (105° accumulated drift), which
+                                   # broke autotune's "level" check
+                                   # between twitches. 0.04 is closer to
+                                   # the roll/pitch values and reflects
+                                   # real-prop yaw drag better — even at
+                                   # axial spin, the prop has skin
+                                   # friction proportional to body yaw
+                                   # rate, not just RPM.
+
 # =========================================================
 # GLOBALS
 # =========================================================
@@ -862,6 +885,16 @@ async def setup_bridge():
             tau_x = float(np.sum(dy * per_motor_thrust))   # y_i * F_i
             tau_y = float(np.sum(-dx * per_motor_thrust))  # -x_i * F_i
             tau_z = float(np.sum(per_motor_yaw_torque))
+
+            # Aerodynamic angular damping: τ_damp = -ANG_DAMPING * ω_body.
+            # imu_ang is in body FLU frame (Imu_Sensor identity-aligned with
+            # base_link); apply damping directly in body FLU before the
+            # tau_*_FLU values are sent to PhysX.
+            if home_locked and imu_valid:
+                tau_x -= ANG_DAMPING[0] * float(imu_ang[0])
+                tau_y -= ANG_DAMPING[1] * float(imu_ang[1])
+                tau_z -= ANG_DAMPING[2] * float(imu_ang[2])
+
             total_torque = np.array([[tau_x, tau_y, tau_z]], dtype=np.float32)
 
             # Apply at the COMPOSITE drone CoM (computed at calibration).

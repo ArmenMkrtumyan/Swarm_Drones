@@ -1,12 +1,21 @@
 # SITL parameter baseline — KNOWN-GOOD reference config.
 #
-# Anchored to 2026-05-02 hover tests on the corrected 1.365 kg / T/W 1.82
-# build (post per-component mass audit + new aero model). Rate gains
-# 0.03 P/I, 0.006 D produced the best result so far: drone airborne >50 s
-# with bounded ±20° oscillation. NOT a clean hover yet — AUTOTUNE is the
-# next step, not more manual tuning. Older 0.10 P/I gains were tuned for
-# the obsolete 1.96 kg / 4:1 T/W build and are too hot for the current
-# dynamics. See inline tuning-history comment near the ATC_RAT_* block.
+# Anchored to 2026-05-02 evening. After ~10 hours of debug+tune iteration
+# (per-component mass audit → composite-CoM bridge fix → angular damping
+# in bridge → ArduPilot rate/angle gain tuning → 8 failed AUTOTUNE
+# attempts), this is the best stable hover the F450 sim achieves.
+#
+# What works:
+#   25-second clean hover, roll/pitch under ±5° during steady state
+#   (peaks ±13/19° in transients), yaw rate mean 12°/s, position drift
+#   under 0.5 m. Reference flight: flight_logs/flight_20260502_204830.jsonl.
+#
+# What doesn't:
+#   ArduPilot AUTOTUNE failed in every attempt — drone class doesn't fit
+#   its assumptions (small 0.159 m arm, low motor headroom at hover, low
+#   yaw authority). Failures spanned "Failed to level", "Twitch Size
+#   Determination Failed", and post-twitch oscillation. We're DONE
+#   trying autotune; manual tune + RL refinement is the path forward.
 #
 # Promote a new config to this file ONLY after a flight is verified to fly
 # stably. To revert: cp sitl_params_best.parm sitl_params_test.parm.
@@ -25,9 +34,10 @@ ARMING_MAGTHRESH 0
 ARMING_SKIPCHK 24
 
 # SITL-ONLY: cleaner simulated GPS so Loiter/Auto pre-arm passes without
-# waiting minutes. Names changed to SIM_GPS1_* in ArduCopter 4.5+.
+# waiting minutes. Names changed to SIM_GPS1_* in ArduCopter 4.5+. The old
+# SIM_GPS1_HDOP param was REMOVED in 4.8-dev (replaced by SIM_GPS1_ACC,
+# default 0.3 m, already small enough — no override needed).
 SIM_GPS1_NUMSATS 18
-SIM_GPS1_HDOP 70
 
 # Relax the hard GPS-quality threshold that gates Loiter/Auto arming.
 GPS_HDOP_GOOD 230
@@ -35,46 +45,68 @@ GPS_HDOP_GOOD 230
 # Hover-throttle prior — real F450 3S/920kv setups converge here.
 MOT_THST_HOVER 0.55
 
-# Cap guided takeoff climb rate to 1.5 m/s (default 2.5 m/s builds too much
-# upward momentum for the 1.365 kg drone to arrest cleanly at target alt).
-WPNAV_SPEED_UP 150
-WPNAV_ACCEL_Z 100
-PILOT_SPEED_UP 150
-PILOT_ACCEL_Z 100
+# Cap guided takeoff climb rate to 1.5 m/s. Bridge applies thrust at the
+# composite drone CoM (Nvidia_SITL_connecter.py "option (c)"), eliminating
+# the +0.12 N·m nose-down lever from the +9 mm forward CoM offset.
+# 4.8-dev rename: WPNAV_* -> WP_*, AND units changed cm/s -> m/s.
+WP_SPD_UP 1.5
+WP_ACC_Z 1.0
+PILOT_SPD_UP 1.5
+PILOT_ACC_Z 1.0
 
-# Safety: cap lean angle at 30°.
-ANGLE_MAX 3000
+# Safety: cap lean angle at 30° (attitude controller).
+# 4.8-dev rename: ANGLE_MAX (centidegrees) -> ATC_ANGLE_MAX (degrees).
+ATC_ANGLE_MAX 30
 
-# Raise auto-disarm timeout to 60s for mission-script timing.
+# Cap the POSITION controller's commanded lean at 5°. Default 0 (= use
+# ATC_ANGLE_MAX 30°) lets the position controller demand huge attitude
+# swings from any small EKF velocity error during the post-takeoff
+# settling window. Capping at 5° prevents that runaway. After ~5 s
+# airborne the EKF stabilizes and 5° is plenty for normal position-hold.
+PSC_ANGLE_MAX 5
+
+# Raise auto-disarm timeout to 60 s for mission-script timing.
 DISARM_DELAY 60
 
-# SITL-ONLY: terrain DB is incomplete for Yerevan and returns bogus offsets.
+# SITL-ONLY: terrain DB is incomplete for Yerevan and returns bogus
+# offsets. 4.8-dev rename: WPNAV_RFND_USE -> WP_RFND_USE.
 TERRAIN_ENABLE 0
-WPNAV_RFND_USE 0
+WP_RFND_USE 0
 
-# Rate gains — back to the best-known baseline for the post-bridge-fix
-# drone. Tuning history exhausted (2026-05-02):
-#   - 0.10 P/I, default D, default ANG: pitch rate hit ±396°/s, drone
-#     barely lifted off — gains way too hot for the lighter / smaller-arm
-#     dynamics, even with the bridge fix in place.
-#   - 0.03 P/I, 0.006 D, default ANG: BEST so far. Drone airborne >50 s,
-#     bounded oscillation ±20°, eventual slow degradation. This is where
-#     AUTOTUNE should start from.
-#   - Various intermediates (D=0.008, 0.010, ATC_ANG=3.0, 2.0) all moved
-#     us away from this baseline.
-# Returning to the best, full stop. AUTOTUNE is the next step, not more
-# manual tuning.
+# Roll/pitch rate gains. P=0.03 / I=0.03 / D=0.006 was found empirically
+# on 2026-05-02 to give the best stable hover. Tried higher (0.05, 0.07,
+# 0.10) — all caused instability or post-twitch oscillation. The drone's
+# small 0.159 m arm + low motor headroom limits how aggressive rate
+# gains can be without saturation. Bridge angular damping (0.05, 0.05)
+# augments the rate-loop D term, so rate-loop D can stay low.
 ATC_RAT_RLL_P 0.03
 ATC_RAT_RLL_I 0.03
 ATC_RAT_PIT_P 0.03
 ATC_RAT_PIT_I 0.03
 ATC_RAT_RLL_D 0.006
 ATC_RAT_PIT_D 0.006
-# ATC_ANG_*_P left at firmware default (4.5).
+# ATC_ANG_RLL_P / ATC_ANG_PIT_P left at firmware default (4.5) — they work.
 
-# AUTOTUNE setup, used after we have a stable hover from these baseline gains.
-AUTOTUNE_AXES 7
-AUTOTUNE_AGGR 0.075
+# YAW rate gains. Default 0.18/0.018 was sized for typical 2 kg+ drones.
+# Our 1.365 kg / 0.159 m arm / low K_torque has ~3.6× less yaw authority,
+# so we scale down: 0.18 / 3.6 ≈ 0.05.
+ATC_RAT_YAW_P 0.05
+ATC_RAT_YAW_I 0.05
+ATC_RAT_YAW_D 0.005
+
+# YAW angle controller — default 4.5 was too aggressive (drove yaw rate
+# target to ±100°/s in early tuning). Halved twice to 1.0.
+ATC_ANG_YAW_P 1.0
+
+# AUTOTUNE — left configured but DOES NOT WORK on this drone. Eight
+# attempts on 2026-05-02 evening all failed with various root causes
+# (twitch saturates motors at our hover throttle, post-twitch overshoot
+# fails leveling, EKF failsafes during twitches). The settings below are
+# the configuration we got CLOSEST with, kept for reference / future
+# investigation. Don't expect them to succeed; capstone goal is RL-based
+# tuning, not ArduPilot autotune.
+AUTOTUNE_AXES 3
+AUTOTUNE_AGGR 0.05
 
 # SITL-ONLY: disable EKF auto-action on failsafe. SITL's JSON-backend GPS
 # reports vel_acc=0, making the EKF variance check hyper-sensitive.
@@ -85,7 +117,7 @@ FS_GCS_ENABLE 0
 # Default 31 includes a speed_err check that the JSON GPS can't pass.
 EK3_GPS_CHECK 3
 
-# GPS glitch radius: 100m (default 25m is too tight for sim transients).
+# GPS glitch radius: 100 m (default 25 m is too tight for sim transients).
 EK3_GLITCH_RAD 100
 
 # SITL-ONLY: clean baro to avoid spurious vz in GLOBAL_POSITION_INT at rest.
