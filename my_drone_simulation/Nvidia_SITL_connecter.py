@@ -18,6 +18,48 @@ from isaacsim.core.experimental.prims import RigidPrim
 from isaacsim.sensors.physics import _sensor
 
 # =========================================================
+# CAPSTONE STAGE-1 DISTURBANCE HARNESS (optional)
+# =========================================================
+# Edit CAPSTONE_PROFILE below to switch between hover-robustness profiles:
+#   "calm"        -- no disturbance (DEFAULT; behavior identical to pre-harness)
+#   "mass+10"     -- extra +10% effective mass (~0.13 kg payload)
+#   "wind2"       -- OU wind gust ~2 m/s peaks along world +X
+#   "wind5"       -- OU wind gust ~5 m/s peaks along world +X
+#   "wind_up3"    -- OU updraft ~3 m/s peaks along world +Z (pushes drone up)
+#   "wind_down3"  -- OU downdraft ~3 m/s peaks along world -Z (pushes drone down)
+#   "imu_noise"   -- gyro/accel Gaussian + bias-walk on values sent to SITL
+#   "worst_case"  -- wind5 + mass+10 + imu_noise stacked (the stress test)
+# Re-import this script in the Isaac Script Editor after editing.
+# Implementation in capstone/control/disturbance.py.
+CAPSTONE_PROFILE = "calm"
+CAPSTONE_PROFILE_SEED: int | None = None  # set int for reproducible runs
+
+import sys as _sys  # noqa: E402  (package shim has to follow stdlib imports)
+# capstone/ moved into Swarm_Drones/ on 2026-05-04 so it would be tracked by
+# the existing git repo. The path-shim now adds Swarm_Drones to sys.path so
+# `from capstone.X import Y` still works.
+_CAPSTONE_ROOT = r"C:\Users\user1811\Desktop\armen-capstone\Swarm_Drones"
+if _CAPSTONE_ROOT not in _sys.path:
+    _sys.path.insert(0, _CAPSTONE_ROOT)
+
+import importlib as _importlib  # noqa: E402
+
+try:
+    from capstone.control import disturbance as _disturbance
+    # Isaac Script Editor reuses sys.modules across re-runs of this script,
+    # so a `from ... import` after editing the source returns the cached old
+    # module. Force a reload so edits to capstone/control/disturbance.py
+    # always take effect on bridge re-import.
+    _disturbance = _importlib.reload(_disturbance)
+    print(f"[capstone] disturbance harness loaded (reloaded); "
+          f"CAPSTONE_PROFILE={CAPSTONE_PROFILE!r}; "
+          f"available={sorted(_disturbance.PROFILE_FACTORIES)}")
+except Exception as _e:
+    _disturbance = None
+    print(f"[capstone] disturbance harness unavailable ({_e!r}) -- forcing calm")
+
+
+# =========================================================
 # PERSISTENT STATE ACROSS RE-RUNS IN ISAAC SCRIPT EDITOR
 # =========================================================
 try:
@@ -98,11 +140,11 @@ class FlightLogger:
         self._write(entry)
 
     def log_state_sent(self, t, *, gyro_frd, accel_frd, pos_ned, vel_ned,
-                       rpy, heading_deg, home_locked):
+                       rpy, heading_deg, home_locked, wind_world=None):
         if t - self._last_state_t < STATE_LOG_PERIOD_S:
             return
         self._last_state_t = t
-        self._write({
+        entry = {
             "t": round(t, 4),
             "src": "isaac->sitl",
             "gyro_frd": [round(float(x), 4) for x in gyro_frd],
@@ -112,7 +154,13 @@ class FlightLogger:
             "rpy": [round(float(x), 4) for x in rpy],
             "heading_deg": round(float(heading_deg), 2),
             "home_locked": bool(home_locked),
-        })
+        }
+        # Optional: capstone disturbance wind in world frame. Omitted entirely
+        # when no wind is being injected (calm profile or pre-home-lock) to
+        # keep file sizes down for the common case.
+        if wind_world is not None:
+            entry["wind_world"] = [round(float(x), 4) for x in wind_world]
+        self._write(entry)
 
     def close(self):
         try:
@@ -457,12 +505,27 @@ def safe_remove_callback(sim_ctx, name: str):
 
 
 def close_udp_socket():
+    """Tear down the UDP listener and release port 9002 to the OS.
+
+    On Windows, plain socket.close() does NOT immediately return the port
+    to the kernel -- a closed-but-not-shut-down socket can linger and keep
+    port 9002 unavailable for the next bridge session. shutdown(SHUT_RDWR)
+    explicitly tells the kernel "I'm done, release the binding now". UDP
+    sockets aren't "connected" so shutdown raises OSError 10057 / ENOTCONN
+    on some stacks; we ignore that. The close() that follows then frees the
+    file descriptor cleanly.
+    """
     global _ARDUPILOT_BRIDGE_SOCKET
 
     if _ARDUPILOT_BRIDGE_SOCKET is not None:
         try:
+            try:
+                _ARDUPILOT_BRIDGE_SOCKET.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                # UDP not-connected / already-shutdown -- expected, not a problem.
+                pass
             _ARDUPILOT_BRIDGE_SOCKET.close()
-            print("Closed old UDP socket.")
+            print("Closed old UDP socket (port 9002 released).")
         except Exception as e:
             print("Warning closing old UDP socket:", repr(e))
         finally:
@@ -619,6 +682,26 @@ async def setup_bridge():
 
     # First-order lag state for rotor angular velocity (per-motor)
     omega_actual = np.zeros(4, dtype=np.float32)
+
+    # Disturbance profile: instantiated fresh per bridge session.
+    # When _disturbance is None (capstone package not on path), profile stays
+    # None and all hooks no-op -> behavior identical to pre-harness bridge.
+    profile = None
+    if _disturbance is not None:
+        try:
+            profile = _disturbance.make(CAPSTONE_PROFILE, seed=CAPSTONE_PROFILE_SEED)
+            print(f"[capstone] disturbance profile active: name={profile.name!r}  "
+                  f"mass_multiplier={profile.mass_multiplier:.3f}")
+            if _ARDUPILOT_BRIDGE_LOGGER is not None:
+                _ARDUPILOT_BRIDGE_LOGGER.log_event(
+                    0.0, "capstone_disturbance_active",
+                    profile=profile.name,
+                    mass_multiplier=float(profile.mass_multiplier),
+                    seed=CAPSTONE_PROFILE_SEED,
+                )
+        except Exception as e:
+            print(f"[capstone] disturbance init failed ({e!r}); running calm")
+            profile = None
 
     await app.next_update_async()
 
@@ -803,7 +886,14 @@ async def setup_bridge():
         # 4a) Aerodynamic effects: translational drag + lift + ground effect
         # -------------------------------------------------
         # Body-frame velocity (world velocity rotated into body frame).
-        vel_body = R_world_body.T @ vel_world
+        # CAPSTONE: subtract wind in world frame so the drone "feels" apparent
+        # flow in drag + lift. Wind is zero before home lock to avoid pushing
+        # the drone around during settle.
+        if profile is not None and home_locked:
+            wind_world = profile.wind_world_mps(dt if dt and dt > 0.0 else 0.001)
+        else:
+            wind_world = np.zeros(3, dtype=np.float64)
+        vel_body = R_world_body.T @ (vel_world - wind_world)
 
         # Translational lift: per-motor thrust gets a Gaussian bonus around the
         # F450's translational-lift sweet spot near 7 m/s. Affects both thrust
@@ -840,6 +930,15 @@ async def setup_bridge():
             per_motor_yaw_torque[:] = 0.0
             F_drag_body[:] = 0.0
 
+        # CAPSTONE: IMU noise on the values that go OUT to SITL and the log.
+        # Internal `imu_ang` (used for damping torque) stays clean -- otherwise
+        # noise feeds back into the physics and we get compounding chaos.
+        # Skipped before home lock so settle detection remains noise-free.
+        if profile is not None and home_locked:
+            gyro_n, accel_n = profile.imu_noise(dt if dt and dt > 0.0 else 0.001)
+            gyro_body = gyro_body + gyro_n
+            accel_body = accel_body + accel_n
+
         # -------------------------------------------------
         # 4b) Apply forces PER MOTOR LINK.
         #
@@ -874,6 +973,22 @@ async def setup_bridge():
                   float(F_drag_body[2])]],
                 dtype=np.float32,
             )
+
+            # CAPSTONE: mass perturbation as a world-frame down force on base,
+            # rotated into body frame so it composes with drag (also body frame
+            # because apply_forces_and_torques_at_pos uses local_frame=True).
+            # mass_load_N returns negative for added weight (Isaac world Z is up).
+            if (profile is not None
+                    and home_locked
+                    and profile.mass_multiplier != 1.0):
+                F_mass_world = np.array(
+                    [0.0, 0.0, profile.mass_load_N(float(total_mass))],
+                    dtype=np.float64,
+                )
+                F_mass_body = R_world_body.T @ F_mass_world
+                drag_force[0, 0] += float(F_mass_body[0])
+                drag_force[0, 1] += float(F_mass_body[1])
+                drag_force[0, 2] += float(F_mass_body[2])
 
             # Optional trim cancellation caused by applying vertical thrust at
             # motor positions while composite CoM is slightly offset. This keeps
@@ -913,7 +1028,12 @@ async def setup_bridge():
             print("apply forces/torques error:", repr(e))
             return
 
-        # Unified flight log: state computed this tick (sent to SITL iff home_locked)
+        # Unified flight log: state computed this tick (sent to SITL iff home_locked).
+        # CAPSTONE: include wind_world in the log when a wind disturbance is active,
+        # so wind is reproducible and plotable from the log alone.
+        wind_log = None
+        if profile is not None and profile.wind.sigma_mps > 0.0:
+            wind_log = wind_world
         if _ARDUPILOT_BRIDGE_LOGGER is not None:
             _ARDUPILOT_BRIDGE_LOGGER.log_state_sent(
                 sim_time,
@@ -924,6 +1044,7 @@ async def setup_bridge():
                 rpy=(roll, pitch, yaw),
                 heading_deg=heading_deg,
                 home_locked=home_locked,
+                wind_world=wind_log,
             )
 
         # -------------------------------------------------
@@ -932,6 +1053,11 @@ async def setup_bridge():
         now_wall = time.time()
         if now_wall - last_debug_print >= 1.0 / DEBUG_PRINT_HZ:
             hz = (1.0 / dt) if dt > 0 else 0.0
+            wind_str = ""
+            if profile is not None and profile.wind.sigma_mps > 0.0:
+                wind_mag = float(np.linalg.norm(wind_world))
+                wind_str = (f" | wind_world={np.round(wind_world, 2).tolist()} "
+                            f"|w|={wind_mag:.2f} m/s")
             print(
                 f"sim_t={sim_time:.3f}s | dt={dt:.6f}s ({hz:.1f} Hz) | "
                 f"home_locked={home_locked} | heading={heading_deg:.1f} | "
@@ -944,6 +1070,7 @@ async def setup_bridge():
                 f"vel_ned={np.round(vel_ned, 3).tolist()} | "
                 f"rpy={[round(roll, 3), round(pitch, 3), round(yaw, 3)]} | "
                 f"speed={speed:.3f}"
+                f"{wind_str}"
             )
             last_debug_print = now_wall
 

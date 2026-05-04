@@ -1,0 +1,41 @@
+name: fig8_50m
+description: |
+  Stage 2 reference mission #2: figure-8 at 5 m altitude with ~50 m wingspan.
+
+  Approximated as 8 waypoints around two adjacent loops -- not a smooth
+  curve, but tight enough that a multicopter at modest speed (WP_SPD ~5 m/s)
+  traces a rounded figure-eight by sequencing through the points. The
+  hold_s is short so the controller doesn't fully stop at each waypoint;
+  cross-track and altitude error during transitions are what we grade.
+
+  Gates:
+    - max bank angle (roll or pitch) during transit < 35 deg
+    - 95th-percentile altitude error < 0.5 m
+    - 100% completion
+
+takeoff:
+  altitude_m: 5.0
+
+defaults:
+  altitude_m: 5.0
+  hold_s: 0.5
+  accept_radius_m: 1.5
+
+# Two loops sharing a common point at the origin: a north loop centered at
+# (+12.5, 0) m and a south loop centered at (-12.5, 0) m. Each loop traced
+# clockwise; together they form a figure-8 along the N/S axis.
+waypoints:
+  # North loop, CW
+  - {north_m:  12.5, east_m:  12.5}   # NE
+  - {north_m:  25.0, east_m:   0.0}   # N apex
+  - {north_m:  12.5, east_m: -12.5}   # NW
+  - {north_m:   0.0, east_m:   0.0}   # cross (origin)
+
+  # South loop, CCW (so the cross-over makes the 8)
+  - {north_m: -12.5, east_m:  12.5}   # SE
+  - {north_m: -25.0, east_m:   0.0}   # S apex
+  - {north_m: -12.5, east_m: -12.5}   # SW
+  - {north_m:   0.0, east_m:   0.0}   # back to origin
+
+return:
+  type: rtl

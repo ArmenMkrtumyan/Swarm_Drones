@@ -1,0 +1,28 @@
+name: square_20m
+description: |
+  Stage 2 reference mission #1: 20 m square at 3 m altitude.
+  Drone takes off, flies the four corners of a 20x20 m square (relative to
+  home), holds 2 s at each corner, then RTLs.
+
+  Gates this mission is graded against (see capstone/missions/replay.py):
+    - 95th-percentile cross-track error < 0.8 m
+    - 100% completion (all four waypoints touched)
+    - RTL final position < 1.0 m from home
+    - Run-to-run mission energy std < 8% of mean across N=10 runs
+
+takeoff:
+  altitude_m: 3.0
+
+defaults:
+  altitude_m: 3.0
+  hold_s: 2.0
+  accept_radius_m: 1.0
+
+waypoints:
+  - {north_m:  20, east_m:   0}   # north edge
+  - {north_m:  20, east_m:  20}   # NE corner
+  - {north_m:   0, east_m:  20}   # east edge
+  - {north_m:   0, east_m:   0}   # back to launch
+
+return:
+  type: rtl
