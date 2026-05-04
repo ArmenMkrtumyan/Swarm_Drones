@@ -51,7 +51,7 @@ except NameError:
 # =========================================================
 # Writes a single unified JSONL file per bridge session under
 # armen-capstone/flight_logs/. Each line is a single event with:
-#   t:    seconds since bridge module import (matches the timestamp sent to SITL)
+#   t:    Isaac physics/simulation seconds when available
 #   src:  one of "sitl->isaac" | "isaac->sitl" | "bridge"
 # Then source-specific payload fields. Post-flight analysis just reads the
 # file top to bottom — both sides of the loop are on one timeline.
@@ -61,6 +61,8 @@ except NameError:
 #   - isaac->sitl: at most once per STATE_LOG_PERIOD_S (50 Hz keeps files small)
 #   - bridge:      only on lifecycle events (startup, home_locked, shutdown, errors)
 STATE_LOG_PERIOD_S = 0.02   # 50 Hz
+DEBUG_PRINT_HZ = 1.0     # do not spam the 1000 Hz physics callback
+PWM_DEBUG_PRINT_HZ = 1.0 # rate-limit motor/PWM debug output
 
 FLIGHT_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\flight_logs"
 
@@ -519,7 +521,7 @@ async def setup_bridge():
     _ARDUPILOT_BRIDGE_LOGGER = FlightLogger(os.path.join(FLIGHT_LOG_DIR, session_name))
     print(f"Flight log: {_ARDUPILOT_BRIDGE_LOGGER.path}")
     _ARDUPILOT_BRIDGE_LOGGER.log_event(
-        time.perf_counter() - t0, "bridge_setup_started",
+        0.0, "bridge_setup_started",
         robot=ROBOT_PATH,
         motor_order=["FR_CCW", "RL_CCW", "FL_CW", "RR_CW"],
     )
@@ -606,7 +608,7 @@ async def setup_bridge():
           f"(|offset| = {np.linalg.norm(com_local_base)*1000:.2f} mm)")
     if _ARDUPILOT_BRIDGE_LOGGER is not None:
         _ARDUPILOT_BRIDGE_LOGGER.log_event(
-            time.perf_counter() - t0, "motor_model_calibrated",
+            0.0, "motor_model_calibrated",
             total_mass_kg=float(total_mass),
             omega_hover_rad_s=float(omega_hover),
             K_thrust=float(K_THRUST),
@@ -634,6 +636,8 @@ async def setup_bridge():
     first_packet_seen = False
     last_pwm = np.array([1000.0, 1000.0, 1000.0, 1000.0], dtype=np.float32)
     last_debug_print = 0.0
+    last_pwm_debug_print = 0.0
+    sim_time = 0.0  # deterministic physics time sent to SITL; do NOT use wall-clock here
     imu_warned_invalid = False
 
     print("Bridge init complete.")
@@ -643,8 +647,14 @@ async def setup_bridge():
 
     def physics_step(dt):
         nonlocal home_pos_world, home_R0_world_body, home_locked, settle_start
-        nonlocal last_addr, first_packet_seen, last_pwm, last_debug_print, imu_warned_invalid
+        nonlocal last_addr, first_packet_seen, last_pwm, last_debug_print, last_pwm_debug_print
+        nonlocal sim_time, imu_warned_invalid
         nonlocal omega_actual
+
+        # SITL JSON timestamp must be simulation/physics time. Using wall-clock
+        # makes the closed-loop behavior depend on computer load and console lag.
+        if dt and dt > 0.0:
+            sim_time += float(dt)
 
         # -------------------------------------------------
         # 1) Receive latest SITL actuator packet
@@ -667,7 +677,7 @@ async def setup_bridge():
                 first_packet_seen = True
                 if _ARDUPILOT_BRIDGE_LOGGER is not None:
                     _ARDUPILOT_BRIDGE_LOGGER.log_event(
-                        time.perf_counter() - t0, "first_sitl_packet",
+                        sim_time, "first_sitl_packet",
                         addr=list(addr),
                     )
 
@@ -675,7 +685,7 @@ async def setup_bridge():
             last_pwm = pkt["pwm"][:4].copy()
             if _ARDUPILOT_BRIDGE_LOGGER is not None:
                 _ARDUPILOT_BRIDGE_LOGGER.log_sitl_packet(
-                    time.perf_counter() - t0,
+                    sim_time,
                     pkt["pwm"],
                     pkt["magic"],
                     pkt["frame_count"],
@@ -757,12 +767,12 @@ async def setup_bridge():
         # -------------------------------------------------
         # 3) Lock home only after the vehicle is settled
         # -------------------------------------------------
-        now_perf = time.perf_counter()
+        now_sim = sim_time
         if not home_locked:
             if speed < MAX_SETTLE_SPEED and gyro_norm < MAX_SETTLE_GYRO:
                 if settle_start is None:
-                    settle_start = now_perf
-                elif (now_perf - settle_start) >= REQUIRED_SETTLE_SECONDS:
+                    settle_start = now_sim
+                elif (now_sim - settle_start) >= REQUIRED_SETTLE_SECONDS:
                     home_pos_world = pos_world.copy()
                     # Anchor NED "north" to the drone's current forward direction.
                     home_R0_world_body = R_world_body.copy()
@@ -771,7 +781,7 @@ async def setup_bridge():
                     print(f"  initial body-to-world rotation (used as NED anchor):\n{home_R0_world_body}")
                     if _ARDUPILOT_BRIDGE_LOGGER is not None:
                         _ARDUPILOT_BRIDGE_LOGGER.log_event(
-                            time.perf_counter() - t0, "home_locked",
+                            sim_time, "home_locked",
                             home_pos_world=home_pos_world.tolist(),
                             R0_world_body=home_R0_world_body.tolist(),
                         )
@@ -831,86 +841,72 @@ async def setup_bridge():
             F_drag_body[:] = 0.0
 
         # -------------------------------------------------
-        # 4b) Apply single wrench to the articulation root (base_link) at
-        # the COMPOSITE drone CoM (com_local_base in base_link frame). Motor
-        # thrusts F_i act along body +Z at motor positions (x_i, y_i, 0);
-        # the analytical torque about base_link origin is:
-        #   torque_i = r_i × F_i = (y_i F_i, -x_i F_i, 0)
-        # which we apply as a pure couple (translation-invariant for the
-        # composite system).
+        # 4b) Apply forces PER MOTOR LINK.
         #
-        # WHY APPLY FORCE AT COMPOSITE CoM (not base_link origin):
-        # The forward CoM offset (~+9 mm) means gravity at the composite CoM
-        # and thrust at base_link origin have a +0.12 N·m nose-down lever
-        # that has to be fought by the controller's I-term. In a real F450
-        # this is a real disturbance the controller learns to balance. In
-        # SIM during the takeoff transient (~1 s), the I-term doesn't have
-        # time to wind up before the drone tilts to ±20°+ pitch, after
-        # which it's in a divergent regime that no gain set has tamed.
-        # By applying total force at composite CoM, the lever arm goes to
-        # zero and the simulated drone is physically balanced at hover.
-        # The controller still has to reject roll/pitch/yaw disturbances,
-        # but no longer fights a steady-state forward-CoM trim.
-        #
-        # SIM-TO-REAL caveat: this REMOVES the forward-CoM trim from the
-        # sim. A controller tuned here will not know to wind up I-term for
-        # the real F450's nose-down tendency. For sim-to-real transfer,
-        # re-introduce the trim as an EXPLICIT feedforward torque on the
-        # body (not as a side effect of force application point) so it can
-        # be toggled / scaled / measured cleanly.
-        #
-        # PRIOR ATTEMPT (2026-05-02): force applied at com_local_base AND
-        # dx/dy referenced against com_local_base. The double change made
-        # the analytical tau and PhysX's lever-arm moment cancel on
-        # base_link, but the COMPOSITE drone behavior was the same as
-        # leaving both at origin (verified by re-deriving). Author at the
-        # time concluded "drone behaved balanced" was wrong (vs. expected
-        # forward-CoM trim) and reverted. We're now intentionally choosing
-        # the balanced-sim path. Only `positions` is changed; tau is still
-        # computed about origin.
+        # This keeps the clean old structure, but fixes the force model for an
+        # articulated Isaac drone: each motor thrust enters through its own
+        # motor link instead of dumping the full 4-motor force into base_link.
+        # Drag + angular damping remain body-level effects on base_link.
         # -------------------------------------------------
         try:
-            F_total_z = float(np.sum(per_motor_thrust))
-            # Body-frame force = (drag_x, drag_y, drag_z + thrust_z). Drag
-            # opposes velocity in all 3 body axes; thrust adds along +Z only.
-            total_force = np.array(
-                [[float(F_drag_body[0]), float(F_drag_body[1]), float(F_drag_body[2]) + F_total_z]],
+            # Per-motor thrust + yaw-reaction torque, applied at each motor link.
+            for i in range(4):
+                F_i = np.array(
+                    [[0.0, 0.0, float(per_motor_thrust[i])]],
+                    dtype=np.float32,
+                )
+                tau_i = np.array(
+                    [[0.0, 0.0, float(per_motor_yaw_torque[i])]],
+                    dtype=np.float32,
+                )
+                pos_i = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+                motor_bodies[i].apply_forces_and_torques_at_pos(
+                    forces=F_i,
+                    torques=tau_i,
+                    positions=pos_i,
+                    local_frame=True,
+                )
+
+            # Body-level drag at composite CoM.
+            drag_force = np.array(
+                [[float(F_drag_body[0]),
+                  float(F_drag_body[1]),
+                  float(F_drag_body[2])]],
                 dtype=np.float32,
             )
 
-            # Torque about base_link ORIGIN (not composite COM): use motor
-            # positions directly with no CoM subtraction.
-            dx = MOTOR_POS_REL_BASE[:, 0]
-            dy = MOTOR_POS_REL_BASE[:, 1]
-            tau_x = float(np.sum(dy * per_motor_thrust))   # y_i * F_i
-            tau_y = float(np.sum(-dx * per_motor_thrust))  # -x_i * F_i
-            tau_z = float(np.sum(per_motor_yaw_torque))
+            # Optional trim cancellation caused by applying vertical thrust at
+            # motor positions while composite CoM is slightly offset. This keeps
+            # hover stable in sim. Later, for sim-to-real, make this scaleable.
+            cx, cy, _cz = (float(com_local_base[0]),
+                            float(com_local_base[1]),
+                            float(com_local_base[2]))
+            F_total_now = float(np.sum(per_motor_thrust))
+            tau_ff_x = +cy * F_total_now
+            tau_ff_y = -cx * F_total_now
+            tau_ff_z = 0.0
 
-            # Aerodynamic angular damping: τ_damp = -ANG_DAMPING * ω_body.
-            # imu_ang is in body FLU frame (Imu_Sensor identity-aligned with
-            # base_link); apply damping directly in body FLU before the
-            # tau_*_FLU values are sent to PhysX.
             if home_locked and imu_valid:
-                tau_x -= ANG_DAMPING[0] * float(imu_ang[0])
-                tau_y -= ANG_DAMPING[1] * float(imu_ang[1])
-                tau_z -= ANG_DAMPING[2] * float(imu_ang[2])
+                body_torque = np.array([[
+                    tau_ff_x - ANG_DAMPING[0] * float(imu_ang[0]),
+                    tau_ff_y - ANG_DAMPING[1] * float(imu_ang[1]),
+                    tau_ff_z - ANG_DAMPING[2] * float(imu_ang[2]),
+                ]], dtype=np.float32)
+            else:
+                body_torque = np.array(
+                    [[tau_ff_x, tau_ff_y, tau_ff_z]], dtype=np.float32
+                )
 
-            total_torque = np.array([[tau_x, tau_y, tau_z]], dtype=np.float32)
-
-            # Apply at the COMPOSITE drone CoM (computed at calibration).
-            # PhysX adds a lever-arm moment (com - base_link_CoM_at_origin) × F
-            # to base_link's torque, but the COMPOSITE drone's net torque
-            # about its CoM is zero because the force passes through the
-            # composite CoM. Constraint forces between links absorb the
-            # base_link-only stress.
-            positions = np.array([[float(com_local_base[0]),
-                                   float(com_local_base[1]),
-                                   float(com_local_base[2])]], dtype=np.float32)
-
+            com_pos = np.array(
+                [[float(com_local_base[0]),
+                  float(com_local_base[1]),
+                  float(com_local_base[2])]],
+                dtype=np.float32,
+            )
             base.apply_forces_and_torques_at_pos(
-                forces=total_force,
-                torques=total_torque,
-                positions=positions,
+                forces=drag_force,
+                torques=body_torque,
+                positions=com_pos,
                 local_frame=True,
             )
         except Exception as e:
@@ -920,7 +916,7 @@ async def setup_bridge():
         # Unified flight log: state computed this tick (sent to SITL iff home_locked)
         if _ARDUPILOT_BRIDGE_LOGGER is not None:
             _ARDUPILOT_BRIDGE_LOGGER.log_state_sent(
-                time.perf_counter() - t0,
+                sim_time,
                 gyro_frd=gyro_body,
                 accel_frd=accel_body,
                 pos_ned=pos_ned,
@@ -931,43 +927,35 @@ async def setup_bridge():
             )
 
         # -------------------------------------------------
-        # 5) Debug print
+        # 5) Debug print — rate-limited only
         # -------------------------------------------------
-        now = time.time()
-        if now - last_debug_print > 1.0:
+        now_wall = time.time()
+        if now_wall - last_debug_print >= 1.0 / DEBUG_PRINT_HZ:
             hz = (1.0 / dt) if dt > 0 else 0.0
             print(
-                f"dt={dt:.6f}s ({hz:.1f} Hz) | "
-                f"home_locked={home_locked} | "
-                f"heading={heading_deg:.1f} | "
-                f"PWM={last_pwm.tolist()} | "
+                f"sim_t={sim_time:.3f}s | dt={dt:.6f}s ({hz:.1f} Hz) | "
+                f"home_locked={home_locked} | heading={heading_deg:.1f} | "
+                f"PWM={np.round(last_pwm, 1).tolist()} | "
                 f"thrust={np.round(per_motor_thrust, 3).tolist()} | "
                 f"imu_valid={imu_valid} | "
                 f"gyro={np.round(gyro_body, 3).tolist()} | "
                 f"accel={np.round(accel_body, 3).tolist()} | "
+                f"pos_ned={np.round(pos_ned, 3).tolist()} | "
+                f"vel_ned={np.round(vel_ned, 3).tolist()} | "
+                f"rpy={[round(roll, 3), round(pitch, 3), round(yaw, 3)]} | "
                 f"speed={speed:.3f}"
             )
+            last_debug_print = now_wall
 
+        if np.any(last_pwm > 1000.0) and now_wall - last_pwm_debug_print >= 1.0 / PWM_DEBUG_PRINT_HZ:
             print(
-                f"send pos_ned={np.round(pos_ned, 3).tolist()} | "
-                f"vel_ned={np.round(vel_ned, 3).tolist()} | "
-                f"attitude={[round(roll, 3), round(pitch, 3), round(yaw, 3)]}"
-            )
-
-            last_debug_print = now
-        if np.any(last_pwm > 1000.0):
-            print(
-                f"ARMED PWM DEBUG | PWM={last_pwm.tolist()} | "
+                f"PWM DEBUG | sim_t={sim_time:.3f}s | PWM={np.round(last_pwm, 1).tolist()} | "
                 f"omega_cmd={np.round(omega_cmd, 1).tolist()} | "
                 f"omega_actual={np.round(omega_actual, 1).tolist()} | "
                 f"thrust={np.round(per_motor_thrust, 3).tolist()} | "
                 f"yaw_torque={np.round(per_motor_yaw_torque, 4).tolist()}"
             )
-        print(
-            f"send pos_ned={np.round(pos_ned, 3).tolist()} | "
-            f"vel_ned={np.round(vel_ned, 3).tolist()} | "
-            f"attitude={[round(roll, 3), round(pitch, 3), round(yaw, 3)]}"
-        )
+            last_pwm_debug_print = now_wall
         # -------------------------------------------------
         # 6) Do not send JSON until home is locked
         # -------------------------------------------------
@@ -978,8 +966,9 @@ async def setup_bridge():
         # 7) Build and send JSON state packet
         # -------------------------------------------------
         try:
+            # Important: this timestamp is Isaac physics time, not wall-clock time.
             reply = {
-                "timestamp": time.perf_counter() - t0,
+                "timestamp": sim_time,
                 "imu": {
                     "gyro": gyro_body.tolist(),
                     "accel_body": accel_body.tolist(),

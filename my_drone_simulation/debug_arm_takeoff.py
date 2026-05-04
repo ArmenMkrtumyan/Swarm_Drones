@@ -29,11 +29,12 @@ import time
 
 MASTER = "udpin:localhost:14551"
 TAKEOFF_ALT = 3.0
-HOLD_SECONDS = 15.0         # how long to actively hold position after reaching altitude
+HOLD_SECONDS = 30.0         # how long to actively hold position after reaching altitude
 HOLD_SEND_HZ = 5            # position-target refresh rate (GUIDED requires regular updates)
 
 # Bench-test fallback
-FORCE_ARM_FALLBACK = True
+# Keep this False for hover/RL-readiness tests. Force-arm hides EKF/arming problems.
+FORCE_ARM_FALLBACK = False
 BENCH_THROTTLE = 1700   # 1200 was below min motor spin -> drone won't lift; 1700 gives real thrust
 BENCH_SECONDS = 5.0
 
@@ -371,7 +372,7 @@ def takeoff_and_hold(master, alt, hold_s=15.0, climb_timeout=20.0, rate_hz=5):
         time.sleep(interval)
 
 
-def land_and_wait(master, timeout=20.0):
+def land_and_wait(master, timeout=60.0):
     """Switch to LAND mode and watch telemetry until disarm or timeout."""
     print("Sending LAND...")
     set_mode(master, "LAND")
@@ -435,7 +436,9 @@ def main():
     # the arm attempt — otherwise GUIDED arm fails with "Need Position Estimate"
     # because the EKF's origin isn't set yet.
     set_mode(master, "GUIDED")
-    wait_for_ekf_ready(master, timeout=30.0)
+    if not wait_for_ekf_ready(master, timeout=30.0):
+        print("EKF was not ready; not arming. Fix estimator/GPS first.")
+        return
 
     arm(master, force=False)
     drain_messages(master, duration=4.0)
@@ -444,11 +447,10 @@ def main():
     print("Armed after normal arm?", armed)
 
     if armed:
-        # Stream position targets continuously from t=0 — this keeps GUIDED alive
-        # throughout the climb so ArduPilot doesn't throttle down near the target.
-        takeoff_and_hold(master, TAKEOFF_ALT, hold_s=HOLD_SECONDS, rate_hz=HOLD_SEND_HZ)
-        # Graceful landing at the end
-        land_and_wait(master, timeout=20.0)
+        # Let NAV_TAKEOFF own the climb first; stream position targets only after target altitude.
+        takeoff_and_hold(master, TAKEOFF_ALT, hold_s=HOLD_SECONDS, climb_timeout=45.0, rate_hz=HOLD_SEND_HZ)
+        # Graceful landing at the end. 60s avoids false "timeout" while land detector settles.
+        land_and_wait(master, timeout=60.0)
         return
 
     if not FORCE_ARM_FALLBACK:
