@@ -38,10 +38,18 @@ from constants import (
     DEFAULT_OBSTACLE_DENSITY,
     DEFAULT_SEED,
     IMAGES_DIR,
+    OUTPUTS_DIR,
 )
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import load_map, random_obstacles, recursive_backtracker
 from visualize import animate, init_drone_palette, render_frame
+
+# Lazy-import controllers so PF / Consensus work even when torch isn't
+# installed; only MARL fails-fast on missing torch.
+from controllers import (
+    ConsensusController,
+    PotentialFieldsController,
+)
 
 
 def _output_prefix(save_arg: str | None) -> str:
@@ -250,6 +258,33 @@ def main() -> None:
                         help="total drones in the swarm (≥ 1). Drone 1 always hovers as a "
                              "battery sanity check; the rest run the random policy.")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--policy",
+        choices=["random", "pf", "consensus", "marl"],
+        default="random",
+        help="which controller to run (default: random)",
+    )
+    parser.add_argument(
+        "--all-active",
+        action="store_true",
+        help="disable the drone-0-hovers convention. Default keeps drone 0 "
+             "hovering as a battery sanity check; pass this flag to let "
+             "every drone move (better for visually verifying a controller).",
+    )
+    parser.add_argument(
+        "--marl-checkpoint",
+        type=str,
+        default=None,
+        help="path to an SB3 PPO checkpoint for --policy marl. "
+             "Defaults to outputs/marl_ppo.zip, or "
+             "outputs/marl_ppo_n{drones}.zip if it exists.",
+    )
+    parser.add_argument(
+        "--marl-stochastic",
+        action="store_true",
+        help="for --policy marl: sample stochastically instead of taking the "
+             "deterministic mean (recommended; trained policy is exploratory).",
+    )
     # NOTE: there is intentionally no --steps flag and no step-count safety cap.
     # The sim runs until env.is_terminal(), which fires on either:
     #   - 100% coverage (mission success)
@@ -281,6 +316,42 @@ def main() -> None:
     # only affects rendering — env.step() doesn't touch it.
     init_drone_palette(args.drones, seed=None)
 
+    # ---- pick the policy ---------------------------------------------------
+    hover_idx = None if args.all_active else 0
+    if args.policy == "random":
+        policy_fn = random_policy_with_hover  # always pins actions[0]=0
+        if args.all_active:
+            print("[note] --all-active is ignored for --policy random "
+                  "(random_policy_with_hover always pins drone 0).")
+    elif args.policy == "pf":
+        policy_fn = PotentialFieldsController(hover_drone_idx=hover_idx)
+    elif args.policy == "consensus":
+        policy_fn = ConsensusController(hover_drone_idx=hover_idx)
+    elif args.policy == "marl":
+        from controllers import MARLController
+        if MARLController is None:
+            raise SystemExit(
+                "MARL requires torch + stable-baselines3 — install via "
+                "`pip install -r requirements.txt`."
+            )
+        # Prefer per-n-drones checkpoint if it exists (matches benchmark naming).
+        ckpt = args.marl_checkpoint
+        if ckpt is None:
+            per_n = OUTPUTS_DIR / f"marl_ppo_n{args.drones}.zip"
+            default = OUTPUTS_DIR / "marl_ppo.zip"
+            ckpt = str(per_n if per_n.exists() else default)
+        policy_fn = MARLController(
+            checkpoint=ckpt,
+            deterministic=not args.marl_stochastic,
+            hover_drone_idx=hover_idx,
+        )
+        print(f"[marl] loaded {ckpt}  "
+              f"(deterministic={not args.marl_stochastic})")
+    else:  # pragma: no cover
+        raise ValueError(f"unknown policy: {args.policy}")
+    print(f"policy: {args.policy}  hover-verify drone: "
+          f"{'drone 1' if hover_idx == 0 else 'disabled (--all-active)'}")
+
     mpc = env.sim_cfg.meters_per_cell
     h, w = grid.shape
     n_free = int((grid == 0).sum())
@@ -289,8 +360,11 @@ def main() -> None:
     print(f"drones: {args.drones} × {env.drone_cfg.mass_kg:.1f} kg  "
           f"max speed {env.drone_cfg.max_speed * mpc:.1f} m/s  "
           f"max accel {env.drone_cfg.max_accel * mpc:.1f} m/s²")
-    print(f"  Drone 1 ALWAYS hovers (battery sanity check). "
-          f"Drones 2..{args.drones} run random policy.")
+    if hover_idx == 0:
+        print(f"  Drone 1 hovers (battery sanity check). "
+              f"Drones 2..{args.drones} run {args.policy}.")
+    else:
+        print(f"  All {args.drones} drones run {args.policy}.")
     print(f"initial coverage: {env.coverage_fraction():.2%}")
 
     b0 = env.battery_state(0)
@@ -311,10 +385,11 @@ def main() -> None:
         if args.save is not None:
             IMAGES_DIR.mkdir(parents=True, exist_ok=True)
             gif_path = str(IMAGES_DIR / f"{prefix}animation.gif")
-        animate(env, random_policy_with_hover, interactive=True, save_path=gif_path)
+        animate(env, policy_fn, interactive=True, save_path=gif_path)
         print(f"\n*** {_completion_reason(env)} ***")
         _print_final_batteries(env)
-        _print_hover_sanity_check(env)
+        if hover_idx == 0:
+            _print_hover_sanity_check(env)
         if gif_path:
             print(f"saved animation: {gif_path}")
         return
@@ -328,7 +403,7 @@ def main() -> None:
 
     history = [env.coverage_fraction()]
     while not env.is_terminal():
-        env.step(random_policy_with_hover(env))
+        env.step(policy_fn(env))
         history.append(env.coverage_fraction())
     print(f"\n*** {_completion_reason(env)} ***")
 
@@ -338,12 +413,13 @@ def main() -> None:
     ax.plot(history)
     ax.set_xlabel("step")
     ax.set_ylabel("coverage fraction")
-    ax.set_title(f"random-policy coverage on {args.map} map ({args.drones} drones)")
+    ax.set_title(f"{args.policy} coverage on {args.map} map ({args.drones} drones)")
     ax.grid(True, alpha=0.3)
     fig.savefig(str(curve), dpi=120, bbox_inches="tight")
 
     _print_final_batteries(env)
-    _print_hover_sanity_check(env)
+    if hover_idx == 0:
+        _print_hover_sanity_check(env)
 
     mode_label = "saved" if args.save is not None else "scratch (overwritten next run)"
     print()

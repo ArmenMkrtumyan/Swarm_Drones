@@ -121,6 +121,14 @@ class DroneConfig:
                                   # per-component breakdown and docs/battery-model.md
                                   # for the derivation.
 
+    # Communication range, cells. Caps the radius within which a drone can see
+    # other drones' state (positions, headings, coverage masks). Models the
+    # mesh-routing horizon a real swarm would have on the companion computer
+    # (e.g., BATMAN-adv on Jetson Nano Wi-Fi). `None` = global view (every
+    # drone sees every other drone — the centralized-controller baseline).
+    # Used by the Consensus and MARL controllers via `env.neighbors(i)`.
+    comm_range: Optional[float] = None    # cells; None = unlimited
+
 
 @dataclass
 class BatteryConfig:
@@ -637,6 +645,31 @@ class CoverageEnv:
     def yaw_rates(self) -> np.ndarray:
         """Per-drone yaw rates in rad/s, shape (n_drones,)."""
         return np.array([d.yaw_rate for d in self.drones], dtype=np.float64)
+
+    def neighbors(self, drone_idx: int) -> np.ndarray:
+        """
+        Indices of drones within `DroneConfig.comm_range` of drone `drone_idx`,
+        excluding `drone_idx` itself. Returned in ascending index order.
+
+        If `comm_range is None` the full mesh is returned (every other drone).
+        Models the mesh-routing horizon a real swarm has on its companion
+        computer — see `DroneConfig.comm_range`. Used by the Consensus and
+        MARL controllers to scope per-drone observations.
+        """
+        n = self.n_drones
+        if n <= 1:
+            return np.array([], dtype=np.int64)
+        rng = self.drone_cfg.comm_range
+        all_others = np.array([j for j in range(n) if j != drone_idx],
+                              dtype=np.int64)
+        if rng is None:
+            return all_others
+        me = self.drones[drone_idx].pos
+        keep = []
+        for j in all_others:
+            if float(np.linalg.norm(self.drones[j].pos - me)) <= rng:
+                keep.append(j)
+        return np.array(keep, dtype=np.int64)
 
     # -------- battery --------
 

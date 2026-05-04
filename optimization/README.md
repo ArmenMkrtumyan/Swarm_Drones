@@ -115,11 +115,12 @@ Full setup details, GUI dependencies for Linux/WSL, and all flags are in [`docs/
 | Visit-count overlap metrics (`entry_count`, `total_visits`, `self_revisits`, `cross_overlap_visits`, `wasted_visits_total`) | ✅ done — entry-event semantics, hovering doesn't inflate |
 | Per-drone HSV palette + first-visitor map paint (`init_drone_palette`) | ✅ done — random rotation per run, deterministic seed for tests |
 | Verification scripts (`test_overlap.py`, `test_flight_time.py`, `test_distance.py`) | ✅ done — headless asserts + `--gui` live observation |
-| **Potential Fields controller** | ⬜ next |
-| Per-drone `comm_range` on `CoverageEnv` (limited-view neighbor observations) | ⬜ prerequisite for Consensus |
-| **Consensus-Based Coordination controller** | ⬜ after PF |
-| **Multi-Agent RL** | ⬜ stretch |
-| Energy-aware objective implementation (multi-criteria scoring on top of coverage) | ⬜ pending |
+| **Potential Fields controller** (`controllers/potential_fields.py`) | ✅ done — attract-to-uncovered + drone/wall repulsion + yaw-tracks-velocity |
+| Per-drone `comm_range` on `DroneConfig` (limited-view neighbor observations via `env.neighbors(i)`) | ✅ done |
+| **Consensus-Based Coordination controller** (`controllers/consensus.py`) | ✅ done — Voronoi-flavored, nearest-uncovered-in-region |
+| **Multi-Agent RL** (`controllers/marl.py`, `tools/train_marl.py`) | ✅ done — shared-policy PPO via Stable-Baselines3, Gymnasium wrapper, trained checkpoint at `outputs/marl_ppo.zip` |
+| Benchmark harness (`tools/benchmark.py`) | ✅ done — runs all 4 policies on a fixed seed×map grid, emits CSV + comparison plots |
+| Energy-aware objective implementation (multi-criteria scoring on top of coverage) | ⬜ pending — current benchmark reports the components separately (coverage / time / energy / overlap / wasted visits); compose into a single score later |
 | Isaac Sim port of the chosen method(s) | ⬜ pending |
 
 ---
@@ -138,22 +139,41 @@ _To be added: chosen method(s), benchmark conditions, scores on the energy-aware
 
 ### Track 3 — Learning / control-based (this repo)
 
+All four policies share a common contract: `policy_fn(env) -> np.ndarray` of shape `(n_drones, 3)` = `[ax, ay, alpha_yaw]`. The benchmark harness (`tools/benchmark.py`) runs each on the same `(map, seed)` pairs and writes `benchmark_results.csv` plus four comparison PNGs into `outputs/images/`.
+
+Headline results — 5 seeds × 2 map kinds (`random`, `maze`) × 4 drones, 15×15 grid, run-to-terminal:
+
+| Policy | Final coverage | t→100 % (random) | t→100 % (maze) | Overlap area | Wasted visits |
+|---|---|---|---|---|---|
+| Random Gaussian | 96.5 % | 405 s | rarely reached | 2055 m² | 1619 |
+| **Potential Fields** | 86.7 % | **83 s** | gets stuck ~75 % | **625 m²** | 1311 |
+| **Consensus** | 87.8 % | **76 s** | gets stuck ~76 % | 660 m² | **1229** |
+| **MARL (PPO)** | 93.0 % | 193 s | reaches ~90 % | 1625 m² | 1842 |
+
 #### Random baseline
 
-- Map: recursive-backtracker, 21×21, 4 drones, 300 steps.
-- Coverage: plateaus ~24 % under random Gaussian acceleration commands.
-- Purpose: lower bound — any real controller must beat this.
+Pure Gaussian acceleration. Plateaus ~24 % on a 300-step budget but eventually reaches near-100 % when run to depletion (~405 s on random maps, ~700 s+ on mazes). Lower bound for the energy-aware metrics — any real controller should beat this on at least one axis.
 
-#### Potential Fields
+#### Potential Fields  ([`controllers/potential_fields.py`](controllers/potential_fields.py))
 
-_Pending implementation._
+Khatib-style superposition: each drone is attracted to its nearest uncovered cell, repelled from neighbor drones (1/r²) and walls. Yaw tracks velocity so the wedge sweeps the path. Stateless. **Strength**: fastest to 100 % on random maps. **Weakness**: gets stuck on maze topology because Euclidean attraction doesn't respect corridors.
 
-#### Consensus-Based Coordination
+#### Consensus-Based Coordination  ([`controllers/consensus.py`](controllers/consensus.py))
 
-_Pending implementation._
+Voronoi-flavored coordination. Each drone polls neighbors within `DroneConfig.comm_range` (`env.neighbors(i)`); the communication group implicitly partitions uncovered cells by proximity, and each drone heads to the nearest uncovered cell *in its own region*. Repulsion identical to PF. **Strength**: cleanest territory partition (lower wasted visits and slightly faster to 80 % than PF). **Weakness**: same maze-topology stall as PF.
 
-**Prerequisite — comm-range modeling.** Consensus depends on drones exchanging state with their neighbors. In real flight that's done by a mesh routing protocol on each drone's companion computer (e.g., [BATMAN-adv](https://www.open-mesh.org/projects/batman-adv/wiki/BATMAN_IV) on a Jetson Nano's Wi-Fi link). In this 2D testbed there's no network, so before implementing Consensus we need to add a `comm_range` parameter to `CoverageEnv` (likely on `DroneConfig`) so each drone's observation is restricted to peers within range. That *models* the mesh's effective behavior — who can hear whom — without running a real mesh stack, which only earns its keep when packets and antennas are physical.
+The **prerequisite — `DroneConfig.comm_range`** — is now a real field on `DroneConfig` (default `None` = global mesh; set to a finite radius to scope each drone's observations to local neighbors only). It models the routing horizon a real swarm has on its companion computer (e.g., [BATMAN-adv](https://www.open-mesh.org/projects/batman-adv/wiki/BATMAN_IV) on the Jetson Nano's Wi-Fi link) without running a real mesh stack.
 
-#### Multi-Agent Reinforcement Learning
+#### Multi-Agent Reinforcement Learning  ([`controllers/marl.py`](controllers/marl.py), [`tools/train_marl.py`](tools/train_marl.py))
 
-_Pending implementation._
+Independent PPO with shared parameters via Stable-Baselines3 + Gymnasium. The joint-policy network sees per-drone local state (position, velocity, heading, battery, 5×5 local coverage mask, global coverage fraction) flattened across the swarm; emits joint 2D acceleration. Yaw is set deterministically to track velocity (the policy doesn't have to learn it). Reward = `+coverage_delta_cells - 0.01 (time penalty) +100 (full coverage) -20·(1-cov) (depletion penalty)`. Training: 500k env steps × 4 parallel envs (~2.5 min on this Mac, no GPU). **Strength**: more robust on maze topology (~90 % vs PF/Consensus's ~75 %). **Weakness**: slower than PF/Consensus on simple random maps; still has variance across eval seeds.
+
+#### Comparison plots
+
+Generated by `tools/benchmark.py`:
+- `benchmark_coverage_curves.png` — mean ± std coverage curves across all runs
+- `benchmark_coverage_curves_{random,maze}.png` — split by map type
+- `benchmark_summary_bars.png` — final coverage / t→80 % / energy / wasted-visits-per-%-coverage
+- `benchmark_per_map.png` — final coverage by map type, all policies
+
+Run with `python tools/benchmark.py --seeds 7 11 17 23 29 --maps both --grid 15 --drones 4` (after `python tools/train_marl.py` to populate `outputs/marl_ppo.zip`).

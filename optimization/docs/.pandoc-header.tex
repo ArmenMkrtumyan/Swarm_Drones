@@ -1,0 +1,8 @@
+% Force every \begin{figure} to render exactly where it appears in the
+% source (no LaTeX repositioning). Without this, pandoc's default `htbp`
+% placement lets images float to whichever page LaTeX prefers, which
+% packs unrelated sections together.
+\usepackage{float}
+\let\origfigure\figure
+\let\endorigfigure\endfigure
+\renewenvironment{figure}[1][2]{\expandafter\origfigure\expandafter[H]}{\endorigfigure}
