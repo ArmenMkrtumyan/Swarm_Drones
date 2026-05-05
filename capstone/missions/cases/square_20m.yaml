@@ -15,7 +15,7 @@ takeoff:
 
 defaults:
   altitude_m: 3.0
-  hold_s: 2.0
+  hold_s: 1.0           # hold position 1 s at each corner
   accept_radius_m: 1.0
 
 waypoints:

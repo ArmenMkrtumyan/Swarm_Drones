@@ -21,14 +21,14 @@ from isaacsim.sensors.physics import _sensor
 # CAPSTONE STAGE-1 DISTURBANCE HARNESS (optional)
 # =========================================================
 # Edit CAPSTONE_PROFILE below to switch between hover-robustness profiles:
-#   "calm"        -- no disturbance (DEFAULT; behavior identical to pre-harness)
-#   "mass+10"     -- extra +10% effective mass (~0.13 kg payload)
-#   "wind2"       -- OU wind gust ~2 m/s peaks along world +X
-#   "wind5"       -- OU wind gust ~5 m/s peaks along world +X
-#   "wind_up3"    -- OU updraft ~3 m/s peaks along world +Z (pushes drone up)
-#   "wind_down3"  -- OU downdraft ~3 m/s peaks along world -Z (pushes drone down)
-#   "imu_noise"   -- gyro/accel Gaussian + bias-walk on values sent to SITL
-#   "worst_case"  -- wind5 + mass+10 + imu_noise stacked (the stress test)
+#   "calm"            -- no disturbance (DEFAULT; behavior identical to pre-harness)
+#   "mass_drop_300g"  -- carries +300 g payload, drops it after 5 s of hover
+#                        (>= 1.5 m altitude).
+#   "wind5"           -- OU wind gust ~5 m/s peaks along world +X
+#   "wind_up3"        -- OU updraft ~3 m/s peaks along world +Z (pushes drone up)
+#   "wind_down3"      -- OU downdraft ~3 m/s peaks along world -Z (pushes drone down)
+#   "imu_noise"       -- gyro/accel Gaussian + bias-walk on values sent to SITL
+#   "worst_case"      -- wind5 + mass_drop_300g + imu_noise stacked (stress test)
 # Re-import this script in the Isaac Script Editor after editing.
 # Implementation in capstone/control/disturbance.py.
 CAPSTONE_PROFILE = "calm"
@@ -57,6 +57,7 @@ try:
 except Exception as _e:
     _disturbance = None
     print(f"[capstone] disturbance harness unavailable ({_e!r}) -- forcing calm")
+
 
 
 # =========================================================
@@ -109,6 +110,38 @@ PWM_DEBUG_PRINT_HZ = 1.0 # rate-limit motor/PWM debug output
 FLIGHT_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\flight_logs"
 
 
+# Self-documenting schema written into each flight log as a `log_schema` event,
+# so a reader can grep one file and learn what every abbreviated key means
+# without leaving the log. `logview.py` renders this as the LEGEND section.
+# Keep this in sync with the `log_state_sent` / `log_sitl_packet` entries.
+STATE_SCHEMA = {
+    "t":              "sim time (seconds since bridge start)",
+    "src":            "isaac->sitl  (this stream is bridge state sent to ArduCopter)",
+    "gyro_frd":       "gyroscope sent to SITL, body FRD [gx_fwd, gy_right, gz_down] (rad/s). POST-noise for imu_noise/worst_case profiles.",
+    "accel_frd":      "linear accel sent to SITL, body FRD (m/s^2). POST-noise for imu_noise/worst_case profiles.",
+    "gyro_frd_truth": "(present only on profiles that inject IMU noise) clean gyro reading before noise is added — same units/frame as gyro_frd. Used so analysis can isolate real attitude motion from synthetic sensor noise.",
+    "accel_frd_truth":"(present only on profiles that inject IMU noise) clean accel reading before noise is added — same units/frame as accel_frd.",
+    "pos_ned":        "position NED, anchored at home_lock [north_m, east_m, down_m]",
+    "rel_altitude":   "altitude above home (m). Convenience field: rel_altitude = -pos_ned[2]",
+    "vel_ned":        "velocity NED [vn_north, ve_east, vd_down]  (m/s, +D = downward)",
+    "rpy":            "attitude [roll, pitch, yaw]  (radians, ZYX intrinsic)",
+    "home_locked":    "true once EKF settled and bridge anchored its NED frame",
+    "payload_kg":     "extra mass currently applied as world-Z down-force (kg). 0 for calm/wind/imu; 0.300 -> 0.0 for mass_drop_300g",
+    "thrust_total_N": "sum of per-motor thrust applied this tick after lag, lift, ground effect (N)",
+    "wind_world":     "(present only when a wind disturbance is active) wind in world frame [wx, wy, wz]  (m/s)",
+}
+SITL_PACKET_SCHEMA = {
+    "t":   "sim time (seconds since bridge start)",
+    "src": "sitl->isaac  (this stream is PWM packets received from ArduCopter)",
+    "pwm": "PWM commanded to each motor [M1=FR_CCW, M2=RL_CCW, M3=FL_CW, M4=RR_CW]  (us, 1000-2000)",
+}
+EVENT_SCHEMA = {
+    "t":     "sim time (seconds since bridge start)",
+    "src":   "bridge  (lifecycle events: setup, calibration, home_locked, mass_drop_event, etc.)",
+    "event": "event name (string) — see TIMELINE",
+}
+
+
 class FlightLogger:
     def __init__(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -128,19 +161,22 @@ class FlightLogger:
         entry.update(payload)
         self._write(entry)
 
-    def log_sitl_packet(self, t, pwm, magic, frame_count, addr):
+    def log_sitl_packet(self, t, pwm):
+        # Slimmed 2026-05-05: dropped magic / frame / addr (constants on every
+        # packet — captured once in the `first_sitl_packet` event instead).
         entry = {
             "t": round(t, 4),
             "src": "sitl->isaac",
             "pwm": [float(x) for x in pwm.tolist()[:4]],
-            "magic": int(magic),
-            "frame": int(frame_count),
-            "addr": list(addr) if addr else None,
         }
         self._write(entry)
 
-    def log_state_sent(self, t, *, gyro_frd, accel_frd, pos_ned, vel_ned,
-                       rpy, heading_deg, home_locked, wind_world=None):
+    def log_state_sent(self, t, *, gyro_frd, accel_frd,
+                       pos_ned, vel_ned,
+                       rpy, home_locked,
+                       payload_kg=0.0, thrust_total_N=0.0,
+                       wind_world=None,
+                       gyro_frd_truth=None, accel_frd_truth=None):
         if t - self._last_state_t < STATE_LOG_PERIOD_S:
             return
         self._last_state_t = t
@@ -150,16 +186,33 @@ class FlightLogger:
             "gyro_frd": [round(float(x), 4) for x in gyro_frd],
             "accel_frd": [round(float(x), 4) for x in accel_frd],
             "pos_ned": [round(float(x), 4) for x in pos_ned],
+            # Convenience: altitude above home anchor. Same as -pos_ned[2],
+            # exposed as its own field so log readers don't have to flip a sign
+            # mentally on every line.
+            "rel_altitude": round(-float(pos_ned[2]), 4),
             "vel_ned": [round(float(x), 4) for x in vel_ned],
             "rpy": [round(float(x), 4) for x in rpy],
-            "heading_deg": round(float(heading_deg), 2),
             "home_locked": bool(home_locked),
+            # Per-tick "what is the drone carrying / how hard is it pushing":
+            #   payload_kg     -- extra mass currently applied as down-force
+            #                     (0 for calm/wind/imu, 0.300 -> 0.0 for mass_drop_300g).
+            #   thrust_total_N -- sum of per-motor thrust applied this tick after
+            #                     lag, translational lift, ground effect.
+            "payload_kg": round(float(payload_kg), 4),
+            "thrust_total_N": round(float(thrust_total_N), 4),
         }
         # Optional: capstone disturbance wind in world frame. Omitted entirely
         # when no wind is being injected (calm profile or pre-home-lock) to
         # keep file sizes down for the common case.
         if wind_world is not None:
             entry["wind_world"] = [round(float(x), 4) for x in wind_world]
+        # Optional: pre-noise IMU truth for profiles that inject IMU noise.
+        # Only emitted when distinct from gyro_frd / accel_frd, so calm logs
+        # stay the same size and shape as before.
+        if gyro_frd_truth is not None:
+            entry["gyro_frd_truth"] = [round(float(x), 4) for x in gyro_frd_truth]
+        if accel_frd_truth is not None:
+            entry["accel_frd_truth"] = [round(float(x), 4) for x in accel_frd_truth]
         self._write(entry)
 
     def close(self):
@@ -250,6 +303,20 @@ K_TORQUE_OVER_K_THRUST = 0.02       # reaction-torque / thrust ratio (m); ~0.02 
 # So CCW-prop motors use -1 here; CW-prop motors use +1.
 # Matches ArduPilot QuadX: pwm[0]=FR=CCW, pwm[1]=RL=CCW, pwm[2]=FL=CW, pwm[3]=RR=CW.
 MOTOR_SPIN_DIR = np.array([-1.0, -1.0, +1.0, +1.0], dtype=np.float32)
+
+# Visual propeller spin: continuous-type rotor joints from the URDF, axis = +Z
+# body. Same order as MOTOR_LINK_PATHS = [FR, RL, FL, RR].
+# Rotor angular velocity sign in body +Z is the OPPOSITE of MOTOR_SPIN_DIR
+# (which is the body's reaction torque sign). So FR/RL spin CCW (+Z) and
+# FL/RR spin CW (-Z) viewed from above -- matches ArduPilot QuadX physical
+# direction.
+ROTOR_JOINT_NAMES = [
+    "front_right_rotor_joint",
+    "rear_left_rotor_joint",
+    "front_left_rotor_joint",
+    "rear_right_rotor_joint",
+]
+ROTOR_SPIN_SIGN = (-MOTOR_SPIN_DIR).astype(np.float32)  # [+1, +1, -1, -1]
 
 # Thrust axis = body +Z in FLU (= world +Z at rest).
 MOTOR_THRUST_DIR_LOCAL = np.array([0.0, 0.0, 1.0], dtype=np.float32)
@@ -588,6 +655,21 @@ async def setup_bridge():
         robot=ROBOT_PATH,
         motor_order=["FR_CCW", "RL_CCW", "FL_CW", "RR_CW"],
     )
+    # Self-documenting legend: every abbreviated key in this log file's three
+    # streams gets a one-line plain-English description. Use `logview.py` to
+    # render it as a LEGEND section, or just `head` the JSONL file.
+    # One log_schema entry per (stream, field) pair — keeps each line short
+    # and grep-friendly. `logview.py` regroups them into the LEGEND section.
+    for _stream, _schema in (
+        ("state", STATE_SCHEMA),
+        ("sitl_packet", SITL_PACKET_SCHEMA),
+        ("events", EVENT_SCHEMA),
+    ):
+        for _field, _desc in _schema.items():
+            _ARDUPILOT_BRIDGE_LOGGER.log_event(
+                0.0, "log_schema",
+                stream=_stream, field=_field, desc=_desc,
+            )
 
     timeline = omni.timeline.get_timeline_interface()
     if not timeline.is_playing():
@@ -649,6 +731,53 @@ async def setup_bridge():
     base = RigidPrim(BASE_LINK_PATH)
     motor_bodies = [RigidPrim(p) for p in MOTOR_LINK_PATHS]
     imu_interface = _sensor.acquire_imu_sensor_interface()
+
+    # Visual propeller spin -- kinematic write of rotor joint positions each
+    # tick. Rotor links are 10 g each and we set joint state directly (no
+    # torque applied through the controller), so reaction on the body is zero
+    # by construction. If the articulation can't be initialized (older USD
+    # without rotor joints, API mismatch, etc.) the bridge keeps flying with
+    # this feature silently disabled.
+    rotor_state = {
+        "art": None,
+        "dof_indices": None,
+        "buffer": None,
+        "angles": np.zeros(4, dtype=np.float32),
+        "warned": False,
+    }
+    try:
+        from isaacsim.core.prims import Articulation as _Articulation
+        _art = _Articulation(prim_paths_expr=ROBOT_PATH)
+        _art.initialize()
+        # The articulation has 30 named joints in this URDF but only 4 actual
+        # DOFs (the four continuous rotor joints; everything else is fixed).
+        # set_joint_positions expects shape (num_envs, num_dofs), so we size
+        # buffer/index lookup against the DOF count, not joint_names.
+        _num_dofs = int(np.asarray(_art.get_joint_positions()).reshape(1, -1).shape[1])
+        _dof_names = None
+        for _attr in ("dof_names", "joint_names"):
+            if hasattr(_art, _attr):
+                _cand = getattr(_art, _attr)
+                if _cand is not None and len(_cand) == _num_dofs:
+                    _dof_names = list(_cand)
+                    break
+        if _dof_names is None:
+            raise RuntimeError(
+                f"articulation reports num_dofs={_num_dofs} but no name "
+                f"attribute matches that length"
+            )
+        rotor_state["dof_indices"] = np.array(
+            [_dof_names.index(n) for n in ROTOR_JOINT_NAMES], dtype=np.int64,
+        )
+        rotor_state["buffer"] = np.zeros(_num_dofs, dtype=np.float32)
+        rotor_state["art"] = _art
+        print(f"[propeller-visual] enabled. num_dofs={_num_dofs}  "
+              f"dof_names={_dof_names}  "
+              f"motor_to_dof={rotor_state['dof_indices'].tolist()}  "
+              f"spin_sign={ROTOR_SPIN_SIGN.tolist()}")
+    except Exception as _e:
+        print(f"[propeller-visual] disabled ({type(_e).__name__}: {_e}); "
+              f"flight unaffected")
 
     # Calibrate K_THRUST so total thrust = m*g when all motors run at omega_hover.
     # Also grab the composite COM in base_link-local frame so the wrench can be
@@ -759,21 +888,19 @@ async def setup_bridge():
                 print(f"First SITL packet from {addr}")
                 first_packet_seen = True
                 if _ARDUPILOT_BRIDGE_LOGGER is not None:
+                    # `addr` and `frame_first` captured ONCE here so the
+                    # per-packet log_sitl_packet entries can stay slim.
                     _ARDUPILOT_BRIDGE_LOGGER.log_event(
                         sim_time, "first_sitl_packet",
                         addr=list(addr),
+                        frame_first=int(pkt["frame_count"]),
+                        magic=int(pkt["magic"]),
                     )
 
             last_addr = addr
             last_pwm = pkt["pwm"][:4].copy()
             if _ARDUPILOT_BRIDGE_LOGGER is not None:
-                _ARDUPILOT_BRIDGE_LOGGER.log_sitl_packet(
-                    sim_time,
-                    pkt["pwm"],
-                    pkt["magic"],
-                    pkt["frame_count"],
-                    addr,
-                )
+                _ARDUPILOT_BRIDGE_LOGGER.log_sitl_packet(sim_time, pkt["pwm"])
 
         # -------------------------------------------------
         # 2) Read base state + IMU
@@ -862,11 +989,42 @@ async def setup_bridge():
                     home_locked = True
                     print(f"Home locked after settling: pos={home_pos_world}")
                     print(f"  initial body-to-world rotation (used as NED anchor):\n{home_R0_world_body}")
+                    # ----- Motor-link physics geometry probe -----
+                    # User reported visual motors moving inward at sim start.
+                    # Print actual link positions in body frame so we can
+                    # confirm physics is using the nominal F450 layout
+                    # (±0.159, ±0.159) regardless of what visuals show.
+                    motor_geom_log: list[dict] = []
+                    nominal_names = ["FR (+X,-Y)", "RL (-X,+Y)", "FL (+X,+Y)", "RR (-X,-Y)"]
+                    print("  motor link physics positions (body frame, m):")
+                    print(f"    {'name':<14s}  {'actual_x':>9s}  {'actual_y':>9s}  {'actual_z':>9s}     "
+                          f"{'nom_x':>7s}  {'nom_y':>7s}  {'nom_z':>7s}     dist_err(mm)")
+                    R_w_b_inv = R_world_body.T
+                    for i, mb in enumerate(motor_bodies):
+                        try:
+                            mp_w, _ = mb.get_world_poses()
+                            mp_world = np.array(mp_w[0], dtype=np.float64)
+                            # World position of motor link → body frame relative to base.
+                            mp_body = R_w_b_inv @ (mp_world - pos_world)
+                            nom = MOTOR_POS_REL_BASE[i]
+                            err_mm = float(np.linalg.norm(mp_body - nom)) * 1000.0
+                            print(f"    {nominal_names[i]:<14s}  "
+                                  f"{mp_body[0]:+9.4f}  {mp_body[1]:+9.4f}  {mp_body[2]:+9.4f}     "
+                                  f"{nom[0]:+7.3f}  {nom[1]:+7.3f}  {nom[2]:+7.3f}     {err_mm:8.2f}")
+                            motor_geom_log.append({
+                                "name": nominal_names[i],
+                                "actual_body": [float(x) for x in mp_body],
+                                "nominal_body": [float(x) for x in nom],
+                                "err_mm": err_mm,
+                            })
+                        except Exception as _e:
+                            print(f"    {nominal_names[i]:<14s}  probe failed: {_e!r}")
                     if _ARDUPILOT_BRIDGE_LOGGER is not None:
                         _ARDUPILOT_BRIDGE_LOGGER.log_event(
                             sim_time, "home_locked",
                             home_pos_world=home_pos_world.tolist(),
                             R0_world_body=home_R0_world_body.tolist(),
+                            motor_link_geometry=motor_geom_log,
                         )
             else:
                 settle_start = None
@@ -877,6 +1035,24 @@ async def setup_bridge():
         omega_cmd = pwm_to_omega_cmd(last_pwm)
         alpha = min(1.0, dt / MOTOR_TIME_CONSTANT_S)
         omega_actual += (omega_cmd - omega_actual) * alpha
+
+        # Visual propeller spin: advance rotor joint angles by omega*dt and
+        # write them kinematically. No torque path -- body dynamics unaffected.
+        if rotor_state["art"] is not None and dt and dt > 0.0:
+            angles = rotor_state["angles"]
+            angles += omega_actual * ROTOR_SPIN_SIGN * float(dt)
+            np.mod(angles, 2.0 * np.pi, out=angles)
+            rotor_state["buffer"][rotor_state["dof_indices"]] = angles
+            try:
+                rotor_state["art"].set_joint_positions(
+                    rotor_state["buffer"].reshape(1, -1)
+                )
+            except Exception as _e:
+                if not rotor_state["warned"]:
+                    print(f"[propeller-visual] set_joint_positions failed "
+                          f"({type(_e).__name__}: {_e}); disabling visual spin")
+                    rotor_state["warned"] = True
+                rotor_state["art"] = None
 
         omega_sq = omega_actual * omega_actual
         per_motor_thrust = K_THRUST * omega_sq                         # N per motor, along local +Z
@@ -934,8 +1110,15 @@ async def setup_bridge():
         # Internal `imu_ang` (used for damping torque) stays clean -- otherwise
         # noise feeds back into the physics and we get compounding chaos.
         # Skipped before home lock so settle detection remains noise-free.
+        # We also stash the pre-noise truth so the bridge log can carry both
+        # for analysis (post-noise = what controller saw, truth = real motion).
+        gyro_truth_log: np.ndarray | None = None
+        accel_truth_log: np.ndarray | None = None
         if profile is not None and home_locked:
             gyro_n, accel_n = profile.imu_noise(dt if dt and dt > 0.0 else 0.001)
+            if (np.any(gyro_n != 0.0) or np.any(accel_n != 0.0)):
+                gyro_truth_log = gyro_body.copy()
+                accel_truth_log = accel_body.copy()
             gyro_body = gyro_body + gyro_n
             accel_body = accel_body + accel_n
 
@@ -977,18 +1160,36 @@ async def setup_bridge():
             # CAPSTONE: mass perturbation as a world-frame down force on base,
             # rotated into body frame so it composes with drag (also body frame
             # because apply_forces_and_torques_at_pos uses local_frame=True).
-            # mass_load_N returns negative for added weight (Isaac world Z is up).
-            if (profile is not None
-                    and home_locked
-                    and profile.mass_multiplier != 1.0):
-                F_mass_world = np.array(
-                    [0.0, 0.0, profile.mass_load_N(float(total_mass))],
-                    dtype=np.float64,
+            # mass_load_N returns negative for added weight (Isaac world Z is up),
+            # 0.0 for calm profiles or after a mass_drop has released its payload.
+            if profile is not None and home_locked:
+                # Tick stateful sub-disturbances (currently: mass_drop) before
+                # we read mass_load_N, so the payload reflects the current sim
+                # tick (hovering or already dropped).
+                altitude_m = -float(pos_ned[2])
+                just_dropped = profile.update(
+                    dt if dt and dt > 0.0 else 0.001,
+                    altitude_m=altitude_m,
                 )
-                F_mass_body = R_world_body.T @ F_mass_world
-                drag_force[0, 0] += float(F_mass_body[0])
-                drag_force[0, 1] += float(F_mass_body[1])
-                drag_force[0, 2] += float(F_mass_body[2])
+                if just_dropped and _ARDUPILOT_BRIDGE_LOGGER is not None:
+                    payload_kg = float(profile.mass_drop.payload_kg) if profile.mass_drop else 0.0
+                    _ARDUPILOT_BRIDGE_LOGGER.log_event(
+                        sim_time, "mass_drop_event",
+                        payload_kg=payload_kg,
+                        altitude_m=altitude_m,
+                    )
+                    print(f"[capstone] mass_drop fired at t={sim_time:.2f}s "
+                          f"alt={altitude_m:.2f}m payload={payload_kg*1000:.0f}g released")
+                mass_force_z = profile.mass_load_N(float(total_mass))
+                if mass_force_z != 0.0:
+                    F_mass_world = np.array(
+                        [0.0, 0.0, mass_force_z],
+                        dtype=np.float64,
+                    )
+                    F_mass_body = R_world_body.T @ F_mass_world
+                    drag_force[0, 0] += float(F_mass_body[0])
+                    drag_force[0, 1] += float(F_mass_body[1])
+                    drag_force[0, 2] += float(F_mass_body[2])
 
             # Optional trim cancellation caused by applying vertical thrust at
             # motor positions while composite CoM is slightly offset. This keeps
@@ -1034,6 +1235,20 @@ async def setup_bridge():
         wind_log = None
         if profile is not None and profile.wind.sigma_mps > 0.0:
             wind_log = wind_world
+        # Per-tick "what is the drone carrying / pushing right now":
+        #   - payload_kg is the disturbance's current extra mass (mass_drop
+        #     reads time-varying, worst_case constant, others zero).
+        #   - thrust_total_N sums the per-motor thrust we applied this tick,
+        #     after lag, lift, and ground effect.
+        # Computed inline from `mass_load_N` instead of calling the
+        # convenience `payload_kg()` method, so this works even when
+        # Isaac's Script Editor serves a stale capstone.control.disturbance
+        # that predates the helper. (See feedback_isaac_script_editor_caching.)
+        if profile is not None:
+            payload_kg = -float(profile.mass_load_N(float(total_mass))) / 9.81
+        else:
+            payload_kg = 0.0
+        thrust_total_N = float(np.sum(per_motor_thrust))
         if _ARDUPILOT_BRIDGE_LOGGER is not None:
             _ARDUPILOT_BRIDGE_LOGGER.log_state_sent(
                 sim_time,
@@ -1042,9 +1257,12 @@ async def setup_bridge():
                 pos_ned=pos_ned,
                 vel_ned=vel_ned,
                 rpy=(roll, pitch, yaw),
-                heading_deg=heading_deg,
                 home_locked=home_locked,
+                payload_kg=payload_kg,
+                thrust_total_N=thrust_total_N,
                 wind_world=wind_log,
+                gyro_frd_truth=gyro_truth_log,
+                accel_frd_truth=accel_truth_log,
             )
 
         # -------------------------------------------------

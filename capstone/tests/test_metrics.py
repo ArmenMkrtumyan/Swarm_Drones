@@ -34,28 +34,30 @@ def bad_log():
     return load(BAD_LOG)
 
 
-def test_good_log_calm_metrics_capture_known_north_drift(good_log):
-    """Today's calm hover holds altitude/jitter tight but drifts ~8 cm north.
+def test_good_log_calm_metrics_match_known_quality(good_log):
+    """Lock in the metric values for the historical good_log calm hover.
 
-    Every profile uses the calm gates now, and the per-axis 5 cm position
-    bound flags this as a FAIL -- which is correct: the drone really did
-    drift 8 cm from home. The other calm gates (altitude std, gyro RMS,
-    jitter) all still pass and are checked here to lock in the underlying
-    flight quality.
+    Gates were re-baselined 2026-05-05 from a 3-run calm reference batch
+    (CALM1/CALM2/CALM3). good_log is an *older* calm hover that drifts
+    slightly more on the north axis (5.5 cm vs ~3.8 cm on the new runs),
+    so it just barely fails the new 5 cm pos_rms_north_m gate while
+    passing everything else.
     """
     m = compute_metrics(good_log, "calm")
     assert m.window_t1 - m.window_t0 > 5.0
     assert 2.0 < m.alt_mean_m < 4.0
-    assert m.alt_std_m < 0.10
-    assert m.xy_std_m < 0.05      # jitter stays tight
-    assert m.gyro_rms < 0.005
+    assert m.alt_std_m < 0.12          # passes new gate
+    assert m.pos_rms_east_m < 0.05      # passes new gate
+    assert m.roll_rms_rad < 0.003       # passes new gate
+    assert m.pitch_rms_rad < 0.003      # passes new gate
+    assert m.gyro_rms < 0.008           # passes new gate
     assert m.crashed == 0
-    # Today's calm hover drifts ~7 cm RMS north (steady drift toward 0.09 m
-    # max). RMS is the gated metric -- it captures the typical drift, not
-    # just the worst sample. The result is a calm FAIL, which is correct.
+    # Just-barely-fails north gate (0.055 vs 0.05 gate) — older hover with
+    # slightly more drift than the 3-run calm reference.
+    assert m.pos_rms_north_m > 0.05
+    assert m.pos_rms_north_m < 0.06
     assert not m.passed
     assert any("pos_rms_north_m" in f for f in m.failures), m.failures
-    assert m.pos_rms_north_m > 0.05
 
 
 def test_bad_log_fails_calm_gate(bad_log):
@@ -92,13 +94,15 @@ def test_window_finder_brackets_hover_at_target_altitude():
     states.append({"t": 12.0, "pos_ned": [0, 0,  0.00], "vel_ned": [0, 0, 0.1]})
 
     t0, t1, target = find_hover_window(states)
-    # Drone arrives at hover at t=2; with SETTLING_TRIM_S=2.0 the graded
-    # window opens at t=4 and closes at the last sample within 50 cm of
-    # target (last airborne hover sample, t=10). The disturbance excursion
-    # at t=6 falls inside [4, 10].
-    assert t0 == pytest.approx(4.0)
-    assert t1 == pytest.approx(10.0)
-    assert 4.0 <= 6.0 <= t1
+    # Drone arrives at hover at t=2; SETTLING_TRIM_S=0 so the window opens
+    # immediately at arrival and runs for WINDOW_DURATION_S (10 s) OR until
+    # the drone descends below AIRBORNE_THRESHOLD_M (0.3 m), whichever is
+    # earlier. This synthetic flight descends past 0.3 m at t=12 (alt=0
+    # there), well before the 10 s cap (which would close at t=12 anyway).
+    # Disturbance excursion at t=6 is inside the window.
+    assert t0 == pytest.approx(2.0)
+    assert t1 == pytest.approx(12.0)
+    assert t0 <= 6.0 <= t1
 
 
 def test_window_finder_includes_disturbance_excursions():

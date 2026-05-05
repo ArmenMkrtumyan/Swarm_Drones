@@ -45,25 +45,30 @@ GPS_HDOP_GOOD 230
 # Hover-throttle prior — real F450 3S/920kv setups converge here.
 MOT_THST_HOVER 0.55
 
-# Cap guided takeoff climb rate to 1.5 m/s. Bridge applies thrust at the
-# composite drone CoM (Nvidia_SITL_connecter.py "option (c)"), eliminating
-# the +0.12 N·m nose-down lever from the +9 mm forward CoM offset.
+# Vertical speed + accel for guided takeoff and climb. Originally capped at
+# 1.5 m/s back when the bridge had a CoM-offset bug producing a +0.12 N.m
+# nose-down lever -- the cap kept takeoffs stable while we debugged. That
+# bug is long since fixed (bridge applies thrust at composite CoM), and
+# 1.5 m/s makes high-altitude takeoffs (e.g. aua_short at 30 m) painfully
+# slow. Bumped 2026-05-05 to 5 m/s climb / 2.5 m/s^2 accel -- a 30 m
+# takeoff now takes ~6 s climb + ~5 s spin-up = ~11 s instead of ~25 s.
 # 4.8-dev rename: WPNAV_* -> WP_*, AND units changed cm/s -> m/s.
-WP_SPD_UP 1.5
-WP_ACC_Z 1.0
-PILOT_SPD_UP 1.5
-PILOT_ACC_Z 1.0
+WP_SPD_UP 5.0
+WP_ACC_Z 2.5
+PILOT_SPD_UP 5.0
+PILOT_ACC_Z 2.5
 
 # Safety: cap lean angle at 30° (attitude controller).
 # 4.8-dev rename: ANGLE_MAX (centidegrees) -> ATC_ANGLE_MAX (degrees).
 ATC_ANGLE_MAX 30
 
-# Cap the POSITION controller's commanded lean at 5°. Default 0 (= use
-# ATC_ANGLE_MAX 30°) lets the position controller demand huge attitude
-# swings from any small EKF velocity error during the post-takeoff
-# settling window. Capping at 5° prevents that runaway. After ~5 s
-# airborne the EKF stabilizes and 5° is plenty for normal position-hold.
-PSC_ANGLE_MAX 5
+# Cap the POSITION controller's commanded lean at 12°. Started at 5° to
+# tame post-takeoff EKF-velocity-error runaway, but 5° also caps horizontal
+# accel at tan(5°)*9.81 = 0.86 m/s^2, which is what limited mission speed
+# to ~4 m/s on 20 m legs (couldn't reach the 5 m/s WP_SPD target). At 12°
+# the cap is 2.08 m/s^2, enough to actually hit 8 m/s in 15 m of runway.
+# If the post-takeoff settling window misbehaves we'll drop back to 8°.
+PSC_ANGLE_MAX 12
 
 # Raise auto-disarm timeout to 60 s for mission-script timing.
 DISARM_DELAY 60
@@ -122,3 +127,22 @@ EK3_GLITCH_RAD 100
 
 # SITL-ONLY: clean baro to avoid spurious vz in GLOBAL_POSITION_INT at rest.
 SIM_BARO_RND 0.01
+
+# Stage 2 mission tuning. 4.8-dev: WPNAV_SPEED -> WP_SPD, units now m/s.
+# Bumped 2026-05-05 from (5.0, 2.5) to (8.0, 3.5) alongside PSC_ANGLE_MAX
+# 5->12. With 5° tilt cap drone capped out at ~4 m/s regardless of WP_SPD;
+# the wider tilt budget makes 8 m/s actually reachable on 20 m legs.
+WP_SPD 8.0
+WP_ACC 3.5
+
+# Don't auto-rotate yaw during waypoint nav. Tried option 2 (face next WP
+# except RTL) on 2026-05-05 -- worked fine on short square_20m legs but
+# triggered EKF "GPS Glitch or Compass error" + emergency yaw reset on the
+# longer aua_short legs (300+ m at 8 m/s). The combination of full-speed
+# translation + active yaw rotation lets GPS course and mag heading
+# disagree past EKF tolerance, cascading into EKF Failsafe. Reverting to
+# 0 keeps takeoff heading the whole mission and removes the conflict.
+# To enable yaw tracking later for video purposes, options are: slow the
+# yaw rate (ATC_RAT_YAW_P/I lower), increase mag noise tolerance
+# (EK3_YAW_M_NSE), or only yaw when speed < threshold.
+WP_YAW_BEHAVIOR 0

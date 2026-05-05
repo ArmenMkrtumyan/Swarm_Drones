@@ -1,4 +1,4 @@
-"""Smoke tests for capstone.control.baseline."""
+"""Smoke tests for capstone.control.benchmark_hover."""
 from __future__ import annotations
 
 import csv
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from capstone.common.logging import load
-from capstone.control.baseline import (
+from capstone.control.benchmark_hover import (
     describe_profile,
     detect_profile,
     extract_series,
@@ -22,7 +22,6 @@ from capstone.control.metrics import compute_metrics
 
 REPO = Path(__file__).resolve().parents[3]   # capstone/ at Swarm_Drones/capstone/, repo root is 3 up
 LOGS = REPO / "flight_logs"
-WEIGHT = LOGS / "flight_20260504_115733_WEIGHT+10.jsonl"
 
 
 def _find_wind5() -> Path | None:
@@ -45,21 +44,9 @@ def wind5_log():
     return load(WIND5)
 
 
-@pytest.fixture
-def weight_log():
-    if not WEIGHT.exists():
-        pytest.skip(f"missing {WEIGHT}")
-    return load(WEIGHT)
-
-
 def test_profile_detected_from_event(wind5_log):
     """capstone_disturbance_active event is the authoritative source."""
     assert detect_profile(wind5_log) == "wind5"
-
-
-def test_profile_detected_from_filename_when_event_absent(weight_log):
-    """Filename hint maps WEIGHT+10 -> mass+10 (the user's naming != our key)."""
-    assert detect_profile(weight_log) == "mass+10"
 
 
 def test_extract_series_lengths_match(wind5_log):
@@ -99,15 +86,17 @@ def test_main_writes_baseline_artifacts(tmp_path):
     assert rc == 0
     assert (tmp_path / "baseline.csv").exists()
     assert (tmp_path / "baseline.json").exists()
-    assert (tmp_path / "summary.txt").exists()
+    assert not (tmp_path / "summary.txt").exists(), \
+        "summary.txt should NOT be generated -- redundant with baseline.csv"
     assert not (tmp_path / "README.md").exists(), \
         "README.md should not be auto-generated -- it overwrites user edits"
 
-    # CSV: every profile we ran must be present.
+    # CSV: each currently-active profile that has a matching log file must
+    # be present. (Old retired-profile logs fall back to 'calm' detection.)
     with (tmp_path / "baseline.csv").open() as f:
         rows = list(csv.DictReader(f))
     profiles = {r["profile"] for r in rows}
-    assert {"calm", "mass+10", "wind2", "wind5", "imu_noise"}.issubset(profiles), profiles
+    assert {"calm", "wind5", "imu_noise"}.issubset(profiles), profiles
 
 
 def test_main_rejects_nonfolder(tmp_path):
@@ -116,13 +105,15 @@ def test_main_rejects_nonfolder(tmp_path):
 
 
 def test_main_with_plots_writes_comparison_png(tmp_path):
-    """Regression: comparison plot used to crash on empty-string CSV cells."""
+    """Regression: comparison plot used to crash on empty-string CSV cells.
+    Plots now live under png/ (and a parallel svg/ tree)."""
     rc = main([str(LOGS), "--out", str(tmp_path)])
     assert rc == 0
-    assert (tmp_path / "comparison.png").exists()
-    assert (tmp_path / "comparison.png").stat().st_size > 0
-    # Per-log plots are split across plots/full/ and plots/zoom/ subdirs.
-    full_plots = list((tmp_path / "plots" / "full").glob("*.png"))
+    assert (tmp_path / "png" / "comparison.png").exists()
+    assert (tmp_path / "png" / "comparison.png").stat().st_size > 0
+    assert (tmp_path / "svg" / "comparison.svg").exists(), \
+        "SVG mirror of comparison plot is missing"
+    full_plots = list((tmp_path / "png" / "plots" / "full").glob("*.png"))
     assert len(full_plots) >= 5
 
 
@@ -133,10 +124,11 @@ def test_describe_profile_shows_wind_mass_imu():
     assert "mass 1.365 kg (nominal)" in s
     assert "IMU clean" in s
 
-    s = describe_profile("mass+10", 1.365)
-    assert "+10%" in s
-    # 1.365 * 1.10 = 1.5015
-    assert "1.501" in s or "1.502" in s
+    s = describe_profile("mass_drop_300g", 1.365)
+    # Lifted mass = 1.365 + 0.300 = 1.665 kg, drops after 5 s of hover.
+    assert "300 g payload" in s
+    assert "1.665" in s
+    assert "5 s hover" in s
 
     s = describe_profile("wind5", 1.365)
     # OU sigma 5/3 -> 3-sigma envelope ~5 m/s peaks (rounded by :.0f)
@@ -151,19 +143,19 @@ def test_describe_profile_shows_wind_mass_imu():
 
 def test_gate_annotation_passing():
     """Gated metric well below threshold -> PASS, green edge."""
-    # alt_std_m gate < 0.10 for calm; 0.04 passes.
+    # alt_std_m gate < 0.08 for calm; 0.04 passes.
     out = format_gate_annotation("alt_std_m", "calm", 0.04, label="alt_std")
     assert out is not None
     text, edge = out
     assert "alt_std = 0.04" in text
-    assert "gate: < 0.1" in text
+    assert "gate: < 0.08" in text
     assert "[PASS]" in text
     assert edge == "#7fbf7f"
 
 
 def test_gate_annotation_failing():
     """Gated metric above threshold -> FAIL, red edge."""
-    # alt_std_m gate < 0.10 for calm; 0.5 fails.
+    # alt_std_m gate < 0.08 for calm; 0.5 fails.
     out = format_gate_annotation("alt_std_m", "calm", 0.5, label="alt_std")
     assert out is not None
     text, edge = out
@@ -221,14 +213,19 @@ def test_zoom_plot_written_alongside_full_plot(tmp_path):
     """
     rc = main([str(LOGS), "--out", str(tmp_path), "--require-event"])
     assert rc == 0
-    full = sorted((tmp_path / "plots" / "full").glob("*.png"))
-    zoom = sorted((tmp_path / "plots" / "zoom").glob("*.png"))
+    png_full = sorted((tmp_path / "png" / "plots" / "full").glob("*.png"))
+    png_zoom = sorted((tmp_path / "png" / "plots" / "zoom").glob("*.png"))
+    svg_full = sorted((tmp_path / "svg" / "plots" / "full").glob("*.svg"))
+    svg_zoom = sorted((tmp_path / "svg" / "plots" / "zoom").glob("*.svg"))
     # At least 5 of each (the original named-profile runs).
-    assert len(full) >= 5, full
-    assert len(zoom) >= 5, zoom
-    # Every zoom plot must have a matching full plot.
-    full_names = {p.name for p in full}
-    zoom_names = {p.name for p in zoom}
+    assert len(png_full) >= 5, png_full
+    assert len(png_zoom) >= 5, png_zoom
+    # Every PNG must have a matching SVG sibling.
+    assert len(svg_full) == len(png_full), (png_full, svg_full)
+    assert len(svg_zoom) == len(png_zoom), (png_zoom, svg_zoom)
+    # Every zoom plot must have a matching full plot (same stem).
+    full_names = {p.stem for p in png_full}
+    zoom_names = {p.stem for p in png_zoom}
     assert zoom_names.issubset(full_names), (full_names, zoom_names)
 
 
@@ -246,10 +243,16 @@ def test_require_event_filters_to_official_runs(tmp_path):
         rows = list(csv.DictReader(f))
     profiles = set(r["profile"] for r in rows)
     # All the named profiles we've run so far should be present.
-    expected_subset = {"calm", "mass+10", "wind2", "wind5", "imu_noise"}
+    expected_subset = {"calm", "wind5", "imu_noise"}
     assert expected_subset.issubset(profiles), profiles
-    # Every profile fails the calm gate under hardcoded PIDs -- that's the
-    # whole point of using uniform gates.
-    failed = [r["profile"] for r in rows if r["passed"] == "0"]
-    assert len(failed) == len(rows), \
-        f"some profiles unexpectedly pass calm gate: {[r['profile'] for r in rows if r['passed'] == '1']}"
+    # worst_case runs MUST fail the calm gate under hardcoded PIDs —
+    # that's the active stress profile (wind5 + mass_drop_300g + imu_noise
+    # stacked) and the canonical RL target. Milder single-effect profiles
+    # may pass, which is fine — they're not the stress test.
+    worst = [r for r in rows if r["profile"] == "worst_case"]
+    if worst:
+        worst_failed = [r for r in worst if r["passed"] == "0"]
+        assert len(worst_failed) == len(worst), (
+            "worst_case runs unexpectedly pass calm gate: "
+            f"{[r['log_path'] for r in worst if r['passed'] == '1']}"
+        )

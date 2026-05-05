@@ -114,6 +114,53 @@ class ImuNoise:
 
 
 # -----------------------------------------------------------------------------
+# Mass drop: stateful payload that releases mid-hover
+# -----------------------------------------------------------------------------
+@dataclass
+class MassDrop:
+    """Carry an absolute payload, then drop it after some seconds of hover.
+
+    Models "drone takes off heavy, releases its cargo at altitude". The drop
+    fires once `hover_elapsed_s >= drop_after_hover_s`; "hover" is defined by
+    `altitude_m >= hover_alt_threshold_m` (single threshold, no velocity gate).
+    Once dropped, `current_payload_kg()` returns 0 forever — the bridge will
+    naturally stop applying any extra weight.
+    """
+    payload_kg: float = 0.300
+    drop_after_hover_s: float = 5.0
+    hover_alt_threshold_m: float = 1.5
+    _hover_elapsed_s: float = 0.0
+    _dropped: bool = False
+    _drop_sim_time_s: float | None = None
+
+    def update(self, dt: float, altitude_m: float) -> bool:
+        """Advance internal state. Returns True iff the drop fires this tick."""
+        if self._dropped or dt <= 0.0:
+            return False
+        if altitude_m < self.hover_alt_threshold_m:
+            return False
+        self._hover_elapsed_s += float(dt)
+        if self._hover_elapsed_s >= self.drop_after_hover_s:
+            self._dropped = True
+            return True
+        return False
+
+    def current_payload_kg(self) -> float:
+        return 0.0 if self._dropped else self.payload_kg
+
+    def reset(self) -> None:
+        """Re-attach the payload (clears _dropped + hover timer).
+
+        Called by the bridge after a disarm so the next takeoff in the same
+        Isaac session starts fresh -- enables N-run batches without
+        re-importing the bridge between every run.
+        """
+        self._hover_elapsed_s = 0.0
+        self._dropped = False
+        self._drop_sim_time_s = None
+
+
+# -----------------------------------------------------------------------------
 # Composite profile
 # -----------------------------------------------------------------------------
 @dataclass
@@ -127,7 +174,10 @@ class DisturbanceProfile:
     name: str
     wind: WindOU = field(default_factory=WindOU)
     imu: ImuNoise = field(default_factory=ImuNoise)
-    mass_multiplier: float = 1.0  # 1.10 = +10% mass
+    mass_multiplier: float = 1.0  # 1.10 = +10% mass (used by worst_case)
+    # When set, takes precedence over `mass_multiplier`: payload is absolute
+    # (kg), gets released mid-hover. mass_multiplier stays 1.0.
+    mass_drop: MassDrop | None = None
 
     def wind_world_mps(self, dt: float) -> np.ndarray:
         return self.wind.step(dt)
@@ -135,12 +185,40 @@ class DisturbanceProfile:
     def imu_noise(self, dt: float) -> tuple[np.ndarray, np.ndarray]:
         return self.imu.step(dt)
 
+    def update(self, dt: float, altitude_m: float | None = None) -> bool:
+        """Tick stateful sub-disturbances. Returns True iff a mass drop fired."""
+        if self.mass_drop is not None and altitude_m is not None:
+            return self.mass_drop.update(dt, altitude_m)
+        return False
+
+    def reset(self) -> None:
+        """Re-arm any stateful sub-disturbances (e.g. mass_drop payload).
+
+        No-op for profiles without state (calm/wind/imu). Bridge calls this
+        on disarm so a single bridge session can run N takeoffs back-to-back.
+        """
+        if self.mass_drop is not None:
+            self.mass_drop.reset()
+
     def mass_load_N(self, base_mass_kg: float, gravity_mps2: float = 9.81) -> float:
         """World-Z force (negative = down) representing the perturbation payload.
 
-        Returns 0.0 for a calm profile.
+        Returns 0.0 for a calm profile, or for a mass_drop profile after the
+        payload has been released.
         """
+        if self.mass_drop is not None:
+            return -self.mass_drop.current_payload_kg() * gravity_mps2
         return -(self.mass_multiplier - 1.0) * base_mass_kg * gravity_mps2
+
+    def payload_kg(self, base_mass_kg: float, gravity_mps2: float = 9.81) -> float:
+        """Current extra mass (kg) being applied as a downward force.
+
+        Mirrors `mass_load_N` semantics but in mass units, so the bridge can
+        log "what is the drone currently carrying" on every state sample —
+        0.0 for calm/wind/imu, time-varying for mass_drop, constant for
+        worst_case (which uses mass_multiplier).
+        """
+        return -self.mass_load_N(base_mass_kg, gravity_mps2) / gravity_mps2
 
 
 # -----------------------------------------------------------------------------
@@ -148,11 +226,6 @@ class DisturbanceProfile:
 # -----------------------------------------------------------------------------
 def calm(*, seed: int | None = None) -> DisturbanceProfile:
     return DisturbanceProfile(name="calm")
-
-
-def mass_plus(fraction: float, *, seed: int | None = None) -> DisturbanceProfile:
-    """Add `fraction` (e.g. 0.10 for +10 %) to effective mass."""
-    return DisturbanceProfile(name=f"mass+{int(fraction * 100)}", mass_multiplier=1.0 + fraction)
 
 
 def wind_lateral(peak_mps: float = 2.0, *, seed: int | None = None) -> DisturbanceProfile:
@@ -194,6 +267,28 @@ def wind_vertical(
     return DisturbanceProfile(name=f"wind_{direction}{int(peak_mps)}", wind=wind)
 
 
+def mass_drop_payload(
+    payload_kg: float = 0.300,
+    drop_after_hover_s: float = 5.0,
+    hover_alt_threshold_m: float = 1.5,
+    *,
+    seed: int | None = None,
+) -> DisturbanceProfile:
+    """Drone takes off carrying `payload_kg`, drops it after `drop_after_hover_s`
+    of being above `hover_alt_threshold_m`.
+
+    Naming: name encodes payload mass in grams, e.g. `mass_drop_300g`.
+    """
+    return DisturbanceProfile(
+        name=f"mass_drop_{int(round(payload_kg * 1000))}g",
+        mass_drop=MassDrop(
+            payload_kg=payload_kg,
+            drop_after_hover_s=drop_after_hover_s,
+            hover_alt_threshold_m=hover_alt_threshold_m,
+        ),
+    )
+
+
 def imu_noise_default(*, seed: int | None = None) -> DisturbanceProfile:
     imu = ImuNoise(
         gyro_white_sigma=0.02,           # rad/s
@@ -206,12 +301,14 @@ def imu_noise_default(*, seed: int | None = None) -> DisturbanceProfile:
 
 
 def worst_case(*, seed: int | None = None) -> DisturbanceProfile:
-    """All three perturbation kinds applied simultaneously.
+    """All three currently-active disturbance kinds applied simultaneously.
 
-    Stress test: 5 m/s OU wind along world +X (matches `wind5`), +10% effective
-    mass (matches `mass+10`), and gyro/accel Gaussian + bias-walk IMU noise
-    (matches `imu_noise`). The drone has to fight wind drag, lift extra weight,
-    and trust noisy state estimates all at once.
+    Stress test: 5 m/s OU wind along world +X (matches `wind5`), +300 g
+    payload that drops after 5 s of hover above 1.5 m (matches
+    `mass_drop_300g`), and gyro/accel Gaussian + bias-walk IMU noise
+    (matches `imu_noise`). The drone has to fight wind drag *and* trust
+    noisy state estimates *while* carrying extra weight that releases
+    mid-hover -- the controller must re-trim immediately after the drop.
     """
     sigma = 5.0 / 3.0
     wind = WindOU(
@@ -233,15 +330,18 @@ def worst_case(*, seed: int | None = None) -> DisturbanceProfile:
         name="worst_case",
         wind=wind,
         imu=imu,
-        mass_multiplier=1.10,
+        mass_drop=MassDrop(
+            payload_kg=0.300,
+            drop_after_hover_s=5.0,
+            hover_alt_threshold_m=1.5,
+        ),
     )
 
 
 # Convenience map: profile-name (matching metrics.PROFILE_GATES) -> factory.
 PROFILE_FACTORIES: dict[str, Callable[..., DisturbanceProfile]] = {
     "calm": calm,
-    "mass+10": lambda **k: mass_plus(0.10, **k),
-    "wind2": lambda **k: wind_lateral(2.0, **k),
+    "mass_drop_300g": lambda **k: mass_drop_payload(0.300, 5.0, **k),
     "wind5": lambda **k: wind_lateral(5.0, **k),
     "wind_up3": lambda **k: wind_vertical(3.0, direction="up", **k),
     "wind_down3": lambda **k: wind_vertical(3.0, direction="down", **k),

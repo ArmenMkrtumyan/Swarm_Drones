@@ -1,0 +1,27 @@
+name: aua_short
+description: |
+  Short AUA flyover: takeoff -> WP1 (~300 m north) -> WP2 (~150 m southwest)
+  -> RTL. Lat/lon waypoints come from the original mission_creator.py
+  "SHORT MISSION" coordinates. Designed for capturing AUA campus footage
+  with the drone's right_camera; pair with auto-recording in the bridge.
+
+  Distances:
+    home -> WP1   ~300 m
+    WP1  -> WP2   ~150 m
+    WP2  -> home  ~150 m
+  Total path ~600 m.
+
+takeoff:
+  altitude_m: 30.0          # 30 m above launchpad
+
+defaults:
+  altitude_m: 30.0
+  hold_s: 1.0
+  accept_radius_m: 1.0
+
+waypoints:
+  - {lat: 40.194682, lon: 44.504019}   # WP1 (north of home)
+  - {lat: 40.193507, lon: 44.503119}   # WP2 (southwest of WP1)
+
+return:
+  type: rtl

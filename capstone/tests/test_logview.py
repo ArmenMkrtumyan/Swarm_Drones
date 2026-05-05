@@ -19,7 +19,7 @@ from capstone.common.logview import (
 
 REPO = Path(__file__).resolve().parents[3]   # capstone/ at Swarm_Drones/capstone/, repo root is 3 up
 GOOD_LOG = REPO / "flight_logs" / "flight_20260504_105431.jsonl"
-WIND_LOG = REPO / "flight_logs" / "flight_20260504_120403_WIND2.jsonl"
+WIND_LOG = REPO / "flight_logs" / "flight_20260504_123507_WIND5.jsonl"
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def test_disturbance_section_empty_when_absent(good_log):
 def test_disturbance_section_present_when_active(wind_log):
     out = render_disturbance(wind_log)
     assert "DISTURBANCE" in out
-    assert "wind2" in out
+    assert "wind5" in out
 
 
 def test_timeline_lists_events(good_log):

@@ -3,7 +3,7 @@
 Usage:
     python -m capstone.common.logview LOG.jsonl
     python -m capstone.common.logview LOG.jsonl --interval 2
-    python -m capstone.common.logview LOG.jsonl --gate wind2
+    python -m capstone.common.logview LOG.jsonl --gate wind5
     python -m capstone.common.logview LOG.jsonl --full
 
 Sections:
@@ -100,6 +100,37 @@ def render_calibration(log: FlightLog) -> str:
     ])
 
 
+def render_legend(log: FlightLog) -> str:
+    """Pretty-print the per-key documentation written by the bridge.
+
+    The bridge emits one `log_schema` event per (stream, field) pair at
+    log-start, so the JSONL stays line-by-line readable. We regroup them
+    here. Older logs without any log_schema events get a short fallback.
+    """
+    schema_evs = [e for e in log.events if e.get("event") == "log_schema"]
+    if not schema_evs:
+        return "\n".join([
+            "",
+            "  LEGEND",
+            "    (log_schema events missing -- pre-2026-05-05 log; key meanings:",
+            "     pos_ned = position NED, vel_ned = velocity NED, rpy = roll/pitch/yaw,",
+            "     gyro_frd / accel_frd = body FRD frame.)",
+        ])
+    # Group by stream while preserving insertion order within each stream.
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for e in schema_evs:
+        groups.setdefault(e.get("stream", "?"), []).append(
+            (str(e.get("field", "?")), str(e.get("desc", "")))
+        )
+    src_labels = {"state": "isaac->sitl", "sitl_packet": "sitl->isaac", "events": "bridge"}
+    lines = ["", "  LEGEND"]
+    for stream, rows in groups.items():
+        lines.append(f"    [{src_labels.get(stream, stream)}]")
+        for field, desc in rows:
+            lines.append(f"      {field:<16}{desc}")
+    return "\n".join(lines)
+
+
 def render_disturbance(log: FlightLog) -> str:
     e = log.find_event("capstone_disturbance_active")
     if not e:
@@ -120,7 +151,14 @@ def render_timeline(log: FlightLog) -> str:
     if not log.events:
         lines.append("    (no events)")
         return "\n".join(lines)
+    # `log_schema` rows are pure metadata (rendered by render_legend); skip
+    # them here so the TIMELINE stays focused on actual lifecycle events.
+    schema_count = sum(1 for e in log.events if e.get("event") == "log_schema")
+    if schema_count:
+        lines.append(f"    ({schema_count} log_schema rows omitted -- see LEGEND)")
     for e in log.events:
+        if e.get("event") == "log_schema":
+            continue
         t = float(e.get("t", 0.0))
         name = e.get("event", "?")
         # Pull a couple of useful fields next to the name when present.
@@ -208,6 +246,7 @@ def render_verdict(log: FlightLog, profile: str) -> str:
 def render(log: FlightLog, *, interval_s: float, gate_profile: str | None) -> str:
     parts = [
         render_header(log),
+        render_legend(log),
         render_calibration(log),
         render_disturbance(log),
         render_timeline(log),
@@ -238,7 +277,8 @@ def main(argv: list[str] | None = None) -> int:
         "--gate",
         default=None,
         help="grade against this profile and add a VERDICT section "
-             "(calm | mass+10 | wind2 | wind5 | imu_noise)",
+             "(calm | mass_drop_300g | wind5 | wind_up3 | wind_down3 | "
+             "imu_noise | worst_case)",
     )
     args = p.parse_args(argv)
 

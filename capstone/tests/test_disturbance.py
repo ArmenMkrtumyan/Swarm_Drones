@@ -7,11 +7,12 @@ import pytest
 from capstone.control.disturbance import (
     DisturbanceProfile,
     ImuNoise,
+    MassDrop,
     WindOU,
     calm,
     imu_noise_default,
     make,
-    mass_plus,
+    mass_drop_payload,
     wind_lateral,
 )
 
@@ -24,14 +25,6 @@ def test_calm_profile_is_zero():
     assert np.allclose(g, 0.0)
     assert np.allclose(a, 0.0)
     assert p.mass_load_N(1.0) == 0.0
-
-
-def test_mass_plus_load_is_downward():
-    p = mass_plus(0.10)
-    # +10% of 1 kg at 9.81 m/s^2 -> 0.981 N down (negative world-Z).
-    assert p.mass_load_N(1.0) == pytest.approx(-0.981)
-    # Doesn't change wind/IMU.
-    assert np.allclose(p.wind_world_mps(0.001), 0.0)
 
 
 def test_ou_wind_stationary_std_matches_sigma():
@@ -91,12 +84,24 @@ def test_imu_bias_walk_drifts_over_time():
 
 
 def test_make_known_profiles():
-    for name in ("calm", "mass+10",
-                 "wind2", "wind5", "wind_up3", "wind_down3",
+    for name in ("calm", "mass_drop_300g",
+                 "wind5", "wind_up3", "wind_down3",
                  "imu_noise", "worst_case"):
         p = make(name, seed=0)
         assert isinstance(p, DisturbanceProfile)
         assert p.name == name
+
+
+def test_make_rejects_retired_profiles():
+    """`mass+10` and `wind2` were dropped entirely 2026-05-05; the underlying
+    mass_plus() helper was deleted. They must not be selectable."""
+    import pytest as _pt
+    for name in ("mass+10", "wind2"):
+        with _pt.raises(KeyError):
+            make(name, seed=0)
+    # The helper itself is gone — importing it should fail.
+    with _pt.raises(ImportError):
+        from capstone.control.disturbance import mass_plus  # noqa: F401
 
 
 def test_wind_up_pushes_along_plus_z():
@@ -123,12 +128,15 @@ def test_wind_down_pushes_along_minus_z():
 
 
 def test_worst_case_combines_all_three_disturbances():
-    """worst_case stacks wind + mass + IMU noise at their stronger settings."""
+    """worst_case stacks wind5 + mass_drop_300g + imu_noise."""
     p = make("worst_case", seed=0)
     # Wind matches wind5 envelope.
     assert p.wind.sigma_mps == pytest.approx(5.0 / 3.0)
-    # Mass matches mass+10.
-    assert p.mass_multiplier == pytest.approx(1.10)
+    # Mass: dynamic mass_drop_300g, not the old static multiplier.
+    assert p.mass_multiplier == pytest.approx(1.0)
+    assert p.mass_drop is not None
+    assert p.mass_drop.payload_kg == pytest.approx(0.300)
+    assert p.mass_drop.drop_after_hover_s == pytest.approx(5.0)
     # IMU noise matches imu_noise_default.
     assert p.imu.gyro_white_sigma == pytest.approx(0.02)
     assert p.imu.accel_white_sigma == pytest.approx(0.10)
@@ -138,19 +146,23 @@ def test_worst_case_combines_all_three_disturbances():
     g, a = p.imu_noise(0.01)
     assert any(abs(x) > 0 for x in w)        # wind is non-zero (mean wind)
     assert any(abs(float(x)) > 0 for x in g) or any(abs(float(x)) > 0 for x in a)
-    assert p.mass_load_N(1.365) < 0           # extra weight pulls down
+    # Pre-drop: payload pulls down. Post-drop (after >=5s above threshold): zero.
+    assert p.mass_load_N(1.365) == pytest.approx(-0.300 * 9.81)
+    for _ in range(700):
+        p.update(0.01, altitude_m=2.0)
+    assert p.mass_load_N(1.365) == 0.0
 
 
-def test_wind5_is_stronger_than_wind2():
-    """Same seed, wind5 should have larger steady-state magnitude than wind2."""
-    p2 = make("wind2", seed=2026)
+def test_wind5_dominates_calm_envelope():
+    """wind5 should have substantial wind energy vs. calm (which is exactly 0)."""
+    p_calm = make("calm", seed=2026)
     p5 = make("wind5", seed=2026)
-    s2 = np.stack([p2.wind_world_mps(0.01) for _ in range(10_000)])[3_000:]
+    s_calm = np.stack([p_calm.wind_world_mps(0.01) for _ in range(2_000)])
     s5 = np.stack([p5.wind_world_mps(0.01) for _ in range(10_000)])[3_000:]
-    rms2 = np.sqrt((s2 * s2).sum(axis=1).mean())
     rms5 = np.sqrt((s5 * s5).sum(axis=1).mean())
-    # 2 -> 5 m/s peaks: sigma 2.5x larger, so RMS magnitude should grow ~2.5x.
-    assert rms5 > 2.0 * rms2
+    assert np.allclose(s_calm, 0.0)
+    # Sigma 5/3 across 3 axes -> RMS magnitude ~ sigma*sqrt(3) ~ 2.9 m/s.
+    assert rms5 > 2.0
 
 
 def test_make_rejects_unknown():
@@ -160,8 +172,116 @@ def test_make_rejects_unknown():
 
 
 def test_seeded_runs_are_reproducible():
-    p1 = make("wind2", seed=123)
-    p2 = make("wind2", seed=123)
+    p1 = make("wind5", seed=123)
+    p2 = make("wind5", seed=123)
     s1 = np.stack([p1.wind_world_mps(0.01) for _ in range(100)])
     s2 = np.stack([p2.wind_world_mps(0.01) for _ in range(100)])
     assert np.array_equal(s1, s2)
+
+
+# -----------------------------------------------------------------------------
+# MassDrop state machine
+# -----------------------------------------------------------------------------
+def test_mass_drop_default_factory_makes_300g_5s():
+    p = mass_drop_payload()
+    assert p.name == "mass_drop_300g"
+    assert p.mass_drop is not None
+    assert p.mass_drop.payload_kg == pytest.approx(0.300)
+    assert p.mass_drop.drop_after_hover_s == pytest.approx(5.0)
+
+
+def test_mass_drop_pre_hover_keeps_payload():
+    """Below the hover-altitude threshold, the timer doesn't advance."""
+    md = MassDrop(payload_kg=0.300, drop_after_hover_s=5.0, hover_alt_threshold_m=1.5)
+    # Spend 10 seconds at altitude 0.5 m (below threshold) — payload stays.
+    for _ in range(1_000):
+        fired = md.update(0.01, altitude_m=0.5)
+        assert fired is False
+    assert md.current_payload_kg() == pytest.approx(0.300)
+    assert md._dropped is False
+
+
+def test_mass_drop_fires_after_threshold_seconds_of_hover():
+    md = MassDrop(payload_kg=0.300, drop_after_hover_s=5.0, hover_alt_threshold_m=1.5)
+    # 4 s above threshold: not yet.
+    fired_count = 0
+    for _ in range(400):
+        if md.update(0.01, altitude_m=2.0):
+            fired_count += 1
+    assert fired_count == 0
+    assert md.current_payload_kg() == pytest.approx(0.300)
+    # Cross the 5 s mark.
+    for _ in range(110):
+        if md.update(0.01, altitude_m=2.0):
+            fired_count += 1
+    # Should have fired exactly once across the whole run.
+    assert fired_count == 1
+    assert md.current_payload_kg() == 0.0
+    # Subsequent ticks never re-fire.
+    for _ in range(100):
+        assert md.update(0.01, altitude_m=2.0) is False
+
+
+def test_mass_drop_load_N_zero_after_drop():
+    p = mass_drop_payload(payload_kg=0.300, drop_after_hover_s=1.0)
+    # Before the drop: load = -0.300 * 9.81 ≈ -2.943 N.
+    assert p.mass_load_N(1.365) == pytest.approx(-0.300 * 9.81)
+    # Tick past the drop trigger.
+    for _ in range(150):
+        p.update(0.01, altitude_m=2.0)
+    assert p.mass_load_N(1.365) == 0.0
+
+
+def test_mass_drop_reset_re_attaches_payload():
+    """After reset(), MassDrop forgets it ever fired so the next takeoff in
+    the same bridge session starts with the payload re-attached."""
+    md = MassDrop(payload_kg=0.300, drop_after_hover_s=1.0)
+    for _ in range(150):
+        md.update(0.01, altitude_m=2.0)
+    assert md._dropped is True
+    assert md.current_payload_kg() == 0.0
+    md.reset()
+    assert md._dropped is False
+    assert md.current_payload_kg() == pytest.approx(0.300)
+    assert md._hover_elapsed_s == 0.0
+    # Can fire again after reset.
+    fired_again = False
+    for _ in range(150):
+        if md.update(0.01, altitude_m=2.0):
+            fired_again = True
+    assert fired_again is True
+
+
+def test_profile_reset_is_noop_for_calm():
+    """profile.reset() must not raise on a profile without mass_drop state."""
+    for name in ("calm", "wind5", "imu_noise"):
+        p = make(name, seed=0)
+        p.reset()  # must not raise
+        # mass_load_N still consistent after reset.
+        assert p.mass_load_N(1.365) == 0.0
+
+
+def test_worst_case_reset_re_attaches_300g():
+    """The whole reason this hook exists: batch-run worst_case without
+    re-importing the bridge. After reset, payload is back to 300 g."""
+    p = make("worst_case", seed=0)
+    for _ in range(700):
+        p.update(0.01, altitude_m=2.0)
+    assert p.mass_load_N(1.365) == 0.0  # dropped
+    p.reset()
+    assert p.mass_load_N(1.365) == pytest.approx(-0.300 * 9.81)
+
+
+def test_mass_drop_profile_update_routes_to_mass_drop():
+    """DisturbanceProfile.update() forwards (dt, altitude_m) into MassDrop."""
+    p = mass_drop_payload(payload_kg=0.100, drop_after_hover_s=0.5)
+    fired = False
+    for _ in range(60):
+        if p.update(0.01, altitude_m=2.0):
+            fired = True
+    assert fired is True
+    assert p.mass_drop.current_payload_kg() == 0.0
+    # Calm profile: update is a no-op and never reports a drop.
+    p_calm = make("calm", seed=0)
+    for _ in range(100):
+        assert p_calm.update(0.01, altitude_m=2.0) is False

@@ -1,27 +1,29 @@
-"""Baseline report: lock in current ArduCopter PID performance per profile.
+"""Hover benchmark: lock in current ArduCopter PID performance per profile.
 
 Walks a folder of bridge JSONL flight logs, detects which disturbance profile
 each log used, computes the same metrics that the Stage-1 gates use, and writes
-a baseline package:
+a benchmark package:
 
-  baseline_report/
+  benchmark_hover_report/
     baseline.csv            -- one row per log, summary stats
     baseline.json           -- full metric records for machine consumption
-    summary.txt             -- pretty-printed human summary
     plots/<log>_series.png  -- per-log time series (alt / xy / attitude / gyro)
-    comparison.png          -- cross-profile bar charts of key metrics
+    comparison.png          -- cross-profile bar chart (only if 2+ profiles)
+                              For curated calm-vs-worst_case-vs-RL comparison,
+                              use `capstone.control.compare_batches` instead.
 
-Without this baseline locked, "RL beat ArduCopter" is unmeasurable.
+Without this benchmark locked, "RL beat ArduCopter" is unmeasurable. Sister
+tool for Stage-2 missions: capstone.missions.benchmark_mission.
 
 Usage:
-    python -m capstone.control.baseline flight_logs/
-    python -m capstone.control.baseline flight_logs/ --out baseline_report
-    python -m capstone.control.baseline flight_logs/ --no-plots       # CSV/JSON only
-    python -m capstone.control.baseline flight_logs/ --require-event  # official baseline:
-                                                                      # only logs from the
-                                                                      # new bridge with a
-                                                                      # deliberately chosen
-                                                                      # profile
+    python -m capstone.control.benchmark_hover flight_logs/
+    python -m capstone.control.benchmark_hover flight_logs/ --out benchmark_hover_report
+    python -m capstone.control.benchmark_hover flight_logs/ --no-plots       # CSV/JSON only
+    python -m capstone.control.benchmark_hover flight_logs/ --require-event  # official:
+                                                                              # only logs from
+                                                                              # the new bridge
+                                                                              # with a chosen
+                                                                              # profile
 """
 from __future__ import annotations
 
@@ -39,23 +41,23 @@ from capstone.control.metrics import (
     HoverMetrics,
     compute_metrics,
 )
+from capstone.control import plot_style
 
 
 # -----------------------------------------------------------------------------
 # Profile detection: prefer the capstone_disturbance_active event, fall back
-# to filename hint. Filenames the user has already produced look like
-# "flight_20260504_115733_WEIGHT+10.jsonl" -> map to "mass+10".
+# to filename hint when the event is missing (typical for older logs).
 # -----------------------------------------------------------------------------
 FILENAME_HINTS = {
-    "WIND_UP3":   "wind_up3",
-    "WIND_DOWN3": "wind_down3",
-    "WIND5":      "wind5",
-    "WIND2":      "wind2",
-    "WEIGHT+10":  "mass+10",
-    "MASS+10":    "mass+10",
-    "IMU_NOISE":  "imu_noise",
-    "WORST":      "worst_case",
-    "CALM":       "calm",
+    "WIND_UP3":      "wind_up3",
+    "WIND_DOWN3":    "wind_down3",
+    "WIND5":         "wind5",
+    "MASS_DROP_300": "mass_drop_300g",
+    "MASSDROP300":   "mass_drop_300g",
+    "DROP300":       "mass_drop_300g",
+    "IMU_NOISE":     "imu_noise",
+    "WORST":         "worst_case",
+    "CALM":          "calm",
 }
 
 
@@ -111,6 +113,8 @@ def extract_series(log: FlightLog) -> dict[str, list[float]]:
     pitches: list[float] = []
     yaws: list[float] = []
     gyros: list[float] = []
+    gyros_truth: list[float] = []
+    have_truth = any("gyro_frd_truth" in s for s in log.states)
     have_wind = any("wind_world" in s for s in log.states)
     winds: list[float] = []
     for s in log.states:
@@ -124,6 +128,11 @@ def extract_series(log: FlightLog) -> dict[str, list[float]]:
         pitches.append(p)
         yaws.append(y)
         gyros.append(math.sqrt(sum(float(g) ** 2 for g in s["gyro_frd"])))
+        # Truth gyro: present only on noise-injecting profiles. Fall back to
+        # the post-noise reading so calm/wind/mass logs render a single line
+        # (truth == post-noise) without a separate codepath.
+        gyro_t_src = s.get("gyro_frd_truth", s["gyro_frd"])
+        gyros_truth.append(math.sqrt(sum(float(g) ** 2 for g in gyro_t_src)))
         if have_wind:
             w = s.get("wind_world", [0.0, 0.0, 0.0])
             winds.append(math.sqrt(sum(float(x) ** 2 for x in w)))
@@ -136,6 +145,8 @@ def extract_series(log: FlightLog) -> dict[str, list[float]]:
         "pitch": pitches,
         "yaw": yaws,
         "gyro_mag": gyros,
+        "gyro_mag_truth": gyros_truth,
+        "have_gyro_truth": have_truth,
         "wind_mag": winds if have_wind else [],
     }
 
@@ -162,7 +173,21 @@ def describe_profile(profile_name: str, total_mass_kg: float | None) -> str:
     else:
         parts.append("wind: calm")
 
-    if total_mass_kg is not None:
+    if p.mass_drop is not None:
+        payload_g = p.mass_drop.payload_kg * 1000.0
+        drop_t = p.mass_drop.drop_after_hover_s
+        if total_mass_kg is not None:
+            loaded = total_mass_kg + p.mass_drop.payload_kg
+            parts.append(
+                f"mass {total_mass_kg:.3f} kg + {payload_g:.0f} g payload "
+                f"(loaded {loaded:.3f} kg), drops after {drop_t:.0f} s hover"
+            )
+        else:
+            parts.append(
+                f"mass nominal + {payload_g:.0f} g payload, "
+                f"drops after {drop_t:.0f} s hover"
+            )
+    elif total_mass_kg is not None:
         m = total_mass_kg * p.mass_multiplier
         pct = (p.mass_multiplier - 1.0) * 100
         if abs(pct) < 0.5:
@@ -208,10 +233,13 @@ def format_gate_annotation(
             or (cmp == "==" and actual_value == threshold)
         )
         status = "PASS" if ok else "FAIL"
-        edge = "#7fbf7f" if ok else "#d62728"
+        edge = plot_style.COLORS["gate_pass_edge"] if ok else plot_style.COLORS["gate_fail_edge"]
         text = f"{pretty} = {actual_value:.4g}   gate: {cmp} {threshold}  [{status}]"
         return text, edge
-    return f"{pretty} = {actual_value:.4g}   (no gate for this profile)", "#bbb"
+    return (
+        f"{pretty} = {actual_value:.4g}   (no gate for this profile)",
+        plot_style.COLORS["gate_none_edge"],
+    )
 
 
 def _annotate_gate(ax, metric_name: str, profile: str,
@@ -282,13 +310,39 @@ def plot_log(
     def shade_window(ax):
         if win_t0 is not None and win_t1 is not None:
             # No legend label -- the subtitle explains the shading.
-            ax.axvspan(win_t0, win_t1, color="#cce5ff", alpha=0.4)
+            ax.axvspan(win_t0, win_t1, color=plot_style.COLORS["hover_window"], alpha=0.4)
+
+    # mass_drop event marker (vertical line + small label) — only present in
+    # mass_drop_* logs. Drawn in every panel so the eye can correlate the drop
+    # to altitude / xy / attitude / gyro response together.
+    drop_ev = log.find_event("mass_drop_event")
+    drop_t = float(drop_ev["t"]) if drop_ev else None
+
+    def mark_drop(ax):
+        if drop_t is not None:
+            ax.axvline(
+                drop_t,
+                color=plot_style.COLORS["mass_drop_event"],
+                linewidth=plot_style.LINE_WIDTHS["marker"],
+                linestyle="--",
+                alpha=0.8,
+            )
 
     # 1) Altitude
     ax = axes[0]
-    ax.plot(s["t"], s["alt"], color="#1f77b4", linewidth=1.0)
+    ax.plot(s["t"], s["alt"],
+            color=plot_style.COLORS["altitude"],
+            linewidth=plot_style.LINE_WIDTHS["altitude"])
     shade_window(ax)
-    ax.set_ylabel("alt (m)")
+    mark_drop(ax)
+    if drop_t is not None:
+        ax.annotate(
+            "payload dropped",
+            xy=(drop_t, 0), xycoords=("data", "axes fraction"),
+            xytext=(4, 4), textcoords="offset points",
+            fontsize=7.5, color=plot_style.COLORS["mass_drop_event"],
+        )
+    ax.set_ylabel(plot_style.LABELS["altitude_y"])
     ax.grid(True, alpha=0.3)
     _annotate_gate(ax, "alt_std_m", metrics.profile, metrics.alt_std_m,
                    label="alt_std")
@@ -298,12 +352,17 @@ def plot_log(
     # so "north" = drone's initial-forward direction (positive = drone moved
     # forward from launch), "east" = drone's initial-right direction.
     ax = axes[1]
-    ax.plot(s["t"], s["x"], color="#2ca02c", linewidth=0.9,
-            label="north (forward of home)")
-    ax.plot(s["t"], s["y"], color="#8c564b", linewidth=0.9,
-            label="east (right of home)")
+    ax.plot(s["t"], s["x"],
+            color=plot_style.COLORS["north"],
+            linewidth=plot_style.LINE_WIDTHS["position"],
+            label=plot_style.LABELS["north_line"])
+    ax.plot(s["t"], s["y"],
+            color=plot_style.COLORS["east"],
+            linewidth=plot_style.LINE_WIDTHS["position"],
+            label=plot_style.LABELS["east_line"])
     shade_window(ax)
-    ax.set_ylabel("xy pos (m)")
+    mark_drop(ax)
+    ax.set_ylabel(plot_style.LABELS["position_y"])
     # Legend goes upper-LEFT so it doesn't collide with the gate boxes.
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
@@ -322,10 +381,17 @@ def plot_log(
     # 3) Attitude (roll/pitch). Yaw not shown -- it doesn't drive position hold
     # and including it would compress roll/pitch off the visible scale.
     ax = axes[2]
-    ax.plot(s["t"], s["roll"], color="#d62728", linewidth=0.8, label="roll")
-    ax.plot(s["t"], s["pitch"], color="#9467bd", linewidth=0.8, label="pitch")
+    ax.plot(s["t"], s["roll"],
+            color=plot_style.COLORS["roll"],
+            linewidth=plot_style.LINE_WIDTHS["attitude"],
+            label=plot_style.LABELS["roll_line"])
+    ax.plot(s["t"], s["pitch"],
+            color=plot_style.COLORS["pitch"],
+            linewidth=plot_style.LINE_WIDTHS["attitude"],
+            label=plot_style.LABELS["pitch_line"])
     shade_window(ax)
-    ax.set_ylabel("roll/pitch (rad)")
+    mark_drop(ax)
+    ax.set_ylabel(plot_style.LABELS["attitude_y"])
     # Legend on left so the gate boxes can stack on the right.
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
@@ -339,15 +405,36 @@ def plot_log(
     ])
 
     # 4) Angular speed magnitude: |gyro| = rotation speed regardless of axis.
+    # Solid line = post-noise (what controller saw, the gated value).
+    # Dotted line = truth (real attitude motion, only differs when imu_noise
+    # is being injected). Same color so they read as the same signal.
     ax = axes[3]
-    ax.plot(s["t"], s["gyro_mag"], color="#ff7f0e", linewidth=0.8)
+    ax.plot(s["t"], s["gyro_mag"],
+            color=plot_style.COLORS["gyro_mag"],
+            linewidth=plot_style.LINE_WIDTHS["gyro"],
+            label="post-noise (sent to SITL)" if s.get("have_gyro_truth") else None)
+    if s.get("have_gyro_truth"):
+        ax.plot(s["t"], s["gyro_mag_truth"],
+                color=plot_style.COLORS["gyro_mag"],
+                linewidth=plot_style.LINE_WIDTHS["gyro"],
+                linestyle=":",
+                label="truth (pre-noise)")
+        ax.legend(loc="upper left", fontsize=8)
     shade_window(ax)
-    ax.set_ylabel("|ang vel| (rad/s)")
+    mark_drop(ax)
+    ax.set_ylabel(plot_style.LABELS["gyro_y"])
     ax.grid(True, alpha=0.3)
-    _annotate_gate(ax, "gyro_rms", metrics.profile, metrics.gyro_rms,
-                   label="gyro_rms")
+    if s.get("have_gyro_truth") and metrics.gyro_rms_truth is not None:
+        _annotate_gate_pair(ax, [
+            ("gyro_rms", metrics.profile, metrics.gyro_rms, "gyro_rms"),
+            ("gyro_rms_truth", metrics.profile, metrics.gyro_rms_truth,
+             "gyro_rms (truth)"),
+        ])
+    else:
+        _annotate_gate(ax, "gyro_rms", metrics.profile, metrics.gyro_rms,
+                       label="gyro_rms")
 
-    axes[-1].set_xlabel("t (s)")
+    axes[-1].set_xlabel(plot_style.LABELS["time_x"])
     if t_range is not None:
         for ax in axes:
             ax.set_xlim(t_range)
@@ -374,8 +461,7 @@ def plot_log(
     )
 
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=110)
+    plot_style.savefig_dual(fig, out_path)
     plt.close(fig)
 
 
@@ -390,8 +476,8 @@ def plot_comparison(rows: list[dict], out_path: Path) -> None:
 
     # Aggregate by profile (mean across logs of that profile, if multiple).
     profiles_in_order = [
-        p for p in ("calm", "mass+10",
-                    "wind2", "wind5", "wind_up3", "wind_down3",
+        p for p in ("calm", "mass_drop_300g",
+                    "wind5", "wind_up3", "wind_down3",
                     "imu_noise", "worst_case")
         if any(r["profile"] == p for r in rows)
     ]
@@ -413,27 +499,58 @@ def plot_comparison(rows: list[dict], out_path: Path) -> None:
         "gyro RMS (rad/s)",
     ]
 
+    display_labels = [plot_style.display_name(p) for p in profiles_in_order]
+    bar_colors = [
+        plot_style.COLORS["bar_calm"] if p == "calm"
+        else plot_style.COLORS["bar_disturbed"]
+        for p in profiles_in_order
+    ]
+
+    def _profile_mean(profile: str, metric: str) -> float | None:
+        vals: list[float] = []
+        for r in rows:
+            if r["profile"] != profile:
+                continue
+            v = r.get(metric, None)
+            if v is None or v == "":
+                continue
+            try:
+                vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+        return (sum(vals) / len(vals)) if vals else None
+
     fig, axes = plt.subplots(2, 3, figsize=(13, 7))
+    import numpy as np  # local import — only needed for paired-bar layout
     for ax, mname, title in zip(axes.ravel(), metric_names, titles):
-        means = []
-        for p in profiles_in_order:
-            vals = []
-            for r in rows:
-                if r["profile"] != p:
-                    continue
-                v = r[mname]
-                # CSV rows store missing metrics as "" (the writer's default for None);
-                # numeric rows are already floats. Tolerate both.
-                if v is None or v == "":
-                    continue
-                try:
-                    vals.append(float(v))
-                except (TypeError, ValueError):
-                    continue
-            means.append(sum(vals) / len(vals) if vals else 0.0)
-        bars = ax.bar(profiles_in_order, means, color=[
-            "#7fbf7f" if p == "calm" else "#fdc086" for p in profiles_in_order
-        ])
+        means = [_profile_mean(p, mname) or 0.0 for p in profiles_in_order]
+        # gyro_rms gets a paired truth bar ON TOP OF the post-noise bar so the
+        # IMU-noise contribution to the metric is visually separable. For
+        # profiles without IMU noise, the two values are identical and the
+        # truth bar is hidden by the main bar — that's intentional, not noise.
+        if mname == "gyro_rms":
+            truth_means = [
+                _profile_mean(p, "gyro_rms_truth") for p in profiles_in_order
+            ]
+            x = np.arange(len(profiles_in_order))
+            w = 0.38
+            bars = ax.bar(x - w/2, means, w, color=bar_colors,
+                          label="post-noise (sent to SITL)")
+            truth_present = any(t is not None for t in truth_means)
+            if truth_present:
+                ax.bar(x + w/2, [t or 0.0 for t in truth_means], w,
+                       color=bar_colors, alpha=0.45, hatch="//",
+                       edgecolor="white", label="truth (pre-noise)")
+                ax.legend(loc="upper left", fontsize=7)
+                for xi, tval in zip(x, truth_means):
+                    if tval is None:
+                        continue
+                    ax.text(xi + w/2, tval, f"{tval:.4g}",
+                            ha="center", va="bottom", fontsize=7)
+            ax.set_xticks(x)
+            ax.set_xticklabels(display_labels)
+        else:
+            bars = ax.bar(display_labels, means, color=bar_colors)
         ax.set_title(title)
         ax.grid(True, axis="y", alpha=0.3)
         # Rotate x-tick labels so longer profile names (wind_down3, worst_case)
@@ -444,11 +561,10 @@ def plot_comparison(rows: list[dict], out_path: Path) -> None:
         for bar, val in zip(bars, means):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                     f"{val:.4g}", ha="center", va="bottom", fontsize=8)
-    fig.suptitle("Baseline: hardcoded-PID hover quality vs disturbance profile",
+    fig.suptitle("Hover benchmark: hardcoded-PID quality vs disturbance profile",
                  fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=110)
+    plot_style.savefig_dual(fig, out_path)
     plt.close(fig)
 
 
@@ -464,7 +580,9 @@ CSV_FIELDS = [
     "xy_std_m", "xy_excursion_max_m",
     "roll_rms_rad", "pitch_rms_rad",
     "roll_max_rad", "pitch_max_rad",
-    "gyro_rms", "gyro_peak", "roll_std", "pitch_std",
+    "gyro_rms", "gyro_peak",
+    "gyro_rms_truth", "gyro_peak_truth",
+    "roll_std", "pitch_std",
     "crashed", "passed", "failures",
 ]
 
@@ -506,6 +624,10 @@ def metrics_to_csv_row(m: HoverMetrics) -> dict:
             if m.pitch_max_rad is not None else "",
         "gyro_rms": round(m.gyro_rms, 4) if m.gyro_rms is not None else "",
         "gyro_peak": round(m.gyro_peak, 4) if m.gyro_peak is not None else "",
+        "gyro_rms_truth": round(m.gyro_rms_truth, 4)
+            if m.gyro_rms_truth is not None else "",
+        "gyro_peak_truth": round(m.gyro_peak_truth, 4)
+            if m.gyro_peak_truth is not None else "",
         "roll_std": round(m.roll_std, 4) if m.roll_std is not None else "",
         "pitch_std": round(m.pitch_std, 4) if m.pitch_std is not None else "",
         "crashed": m.crashed,
@@ -518,7 +640,7 @@ def collect_logs(folder: Path) -> list[Path]:
     return sorted(folder.glob("*.jsonl"))
 
 
-# NOTE: README.md is hand-maintained by the user. The baseline tool used to
+# NOTE: README.md is hand-maintained by the user. The hover benchmark used to
 # auto-generate it from PROFILE_GATES and disturbance configs, but that wiped
 # the user's edits on every run. If you need an up-to-date gates table to
 # paste, run `python -c "from capstone.control.metrics import PROFILE_GATES;
@@ -546,8 +668,8 @@ def render_summary(rows: list[dict]) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("folder", type=Path, help="directory with *.jsonl flight logs")
-    p.add_argument("--out", type=Path, default=Path("baseline_report"),
-                   help="output directory (default: baseline_report)")
+    p.add_argument("--out", type=Path, default=Path("benchmark_hover_report"),
+                   help="output directory (default: benchmark_hover_report)")
     p.add_argument("--no-plots", action="store_true",
                    help="skip matplotlib plots; CSV/JSON only")
     p.add_argument("--min-samples", type=int, default=200,
@@ -563,23 +685,28 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     args.out.mkdir(parents=True, exist_ok=True)
-    # Per-log plots split across two subdirs so readers can scan one view at
-    # a time: full/ keeps the from-t=0 chart, zoom/ keeps the takeoff-through-
-    # landing crop. Filenames are identical inside each subdir.
-    plots_dir = args.out / "plots"
-    plots_full_dir = plots_dir / "full"
-    plots_zoom_dir = plots_dir / "zoom"
-    # Wipe stale plots from any prior run (full/, zoom/, AND the legacy flat
-    # layout from before the split). The tool owns these dirs, so leftover
-    # *.png files from a different filter would mislead a reader scanning
-    # the directory. Only deletes *.png; nothing else.
-    for d in (plots_dir, plots_full_dir, plots_zoom_dir):
+    # PNG and SVG live in parallel sibling trees (png/ and svg/) under the
+    # report root, so the user can edit colors/labels in the SVGs without
+    # the PNGs getting in the way. Per-log plots are further split into
+    # full/ (entire flight) and zoom/ (takeoff-through-landing crop).
+    png_root = args.out / "png"
+    svg_root = args.out / "svg"
+    plots_full_dir = png_root / "plots" / "full"
+    plots_zoom_dir = png_root / "plots" / "zoom"
+    # Wipe stale plots from prior runs (PNG side AND SVG side AND the legacy
+    # flat layout). Only *.png and *.svg are deleted; nothing else.
+    legacy_dirs = [args.out / "plots", args.out / "plots" / "full", args.out / "plots" / "zoom"]
+    for d in (plots_full_dir, plots_zoom_dir,
+              svg_root / "plots" / "full", svg_root / "plots" / "zoom",
+              png_root, svg_root,
+              *legacy_dirs):
         if d.exists():
-            for stale in d.glob("*.png"):
-                try:
-                    stale.unlink()
-                except OSError as _e:
-                    print(f"  warn: could not delete stale plot {stale.name}: {_e!r}")
+            for ext in ("*.png", "*.svg"):
+                for stale in d.glob(ext):
+                    try:
+                        stale.unlink()
+                    except OSError as _e:
+                        print(f"  warn: could not delete stale plot {stale.name}: {_e!r}")
     plots_full_dir.mkdir(parents=True, exist_ok=True)
     plots_zoom_dir.mkdir(parents=True, exist_ok=True)
 
@@ -629,18 +756,25 @@ def main(argv: list[str] | None = None) -> int:
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(json_records, f, indent=2, default=str)
 
-    # Summary
-    summary = render_summary(csv_rows)
-    (args.out / "summary.txt").write_text(summary, encoding="utf-8")
+    # Print summary table to stdout for the human running the command.
+    # We deliberately do NOT write summary.txt — baseline.csv has the same
+    # data in machine-readable form; duplicating it as text was redundant.
     print()
-    print(summary)
+    print(render_summary(csv_rows))
     # README.md is intentionally NOT generated -- it's hand-maintained so the
     # user's edits don't get overwritten on every regeneration.
 
     if not args.no_plots and csv_rows:
-        plot_comparison(csv_rows, args.out / "comparison.png")
-        print(f"\nplots: {plots_full_dir}/  +  {plots_zoom_dir}/  +  "
-              f"{args.out / 'comparison.png'}")
+        # Cross-profile bar chart only makes sense if 2+ profiles are present;
+        # for single-profile batch dirs (e.g. batch_worst_case/) we'd just get
+        # one bar per panel, which is useless. The top-level calm-vs-worst_case
+        # comparison is generated separately by capstone.control.compare_batches.
+        n_profiles = len({r["profile"] for r in csv_rows})
+        if n_profiles >= 2:
+            plot_comparison(csv_rows, png_root / "comparison.png")
+        print(f"\nplots:")
+        print(f"  PNG: {png_root}/")
+        print(f"  SVG: {svg_root}/  (mirror — edit colors/labels here)")
 
     return 0
 

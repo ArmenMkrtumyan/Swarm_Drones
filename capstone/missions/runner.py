@@ -478,9 +478,15 @@ def run_mission(
         if not wait_armed(master, mavutil, timeout=5.0):
             raise RuntimeError("Vehicle did not arm. Check pre-arm checks / params.")
 
+        # Climb timeout scales with takeoff altitude. WP_SPD_UP is 5 m/s in
+        # our SITL params, plus ~6 s of motor spin-up before the drone
+        # starts climbing. Formula: 2x expected_climb_s + 15 s buffer
+        # (generous so a slow run doesn't false-fail), with a 30 s floor.
+        expected_climb_s = mission.takeoff.altitude_m / 5.0
+        climb_timeout = max(30.0, expected_climb_s * 2.0 + 15.0)
         if not takeoff_guided_and_wait(
                 master, mavutil, alt=mission.takeoff.altitude_m, logger=logger,
-                climb_timeout=25.0):
+                climb_timeout=climb_timeout):
             raise RuntimeError("Takeoff did not reach target altitude.")
 
         # Skip past the takeoff item and switch to AUTO for waypoints + RTL.

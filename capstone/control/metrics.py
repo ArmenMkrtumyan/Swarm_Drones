@@ -49,12 +49,17 @@ from capstone.common.logging import FlightLog, load
 # drift) if the calm bar turns out to be physically impossible for some
 # profile -- but right now we don't know that, and we want RL to surprise us.
 CALM_GATES: dict[str, tuple[str, float]] = {
-    "alt_std_m":       ("<", 0.10),
-    "pos_rms_north_m": ("<", 0.05),
-    "pos_rms_east_m":  ("<", 0.05),
-    "roll_rms_rad":    ("<", 0.05),
-    "pitch_rms_rad":   ("<", 0.05),
-    "gyro_rms":        ("<", 0.005),
+    # Gates re-baselined 2026-05-05 from a 3-run calm reference batch
+    # (CALM1/CALM2/CALM3, copied into benchmark_hover_report/calm_baseline_runs/).
+    # Each threshold is set above what the 3 runs actually measure so calm
+    # passes reliably. ANY profile that meets these is at "calm-quality hover"
+    # — that's the bar RL has to clear under disturbance.
+    "alt_std_m":       ("<", 0.08),    # calm 3-run max: 0.073
+    "pos_rms_north_m": ("<", 0.05),    # calm 3-run max: 0.040
+    "pos_rms_east_m":  ("<", 0.05),    # calm 3-run max: 0.032
+    "roll_rms_rad":    ("<", 0.003),   # calm 3-run max: 0.0022
+    "pitch_rms_rad":   ("<", 0.003),   # calm 3-run max: 0.0024
+    "gyro_rms":        ("<", 0.008),   # calm 3-run max: 0.0070
     "crashed":         ("==", 0),
 }
 
@@ -62,8 +67,8 @@ PROFILE_GATES: dict[str, dict[str, tuple[str, float]]] = {
     name: dict(CALM_GATES)
     for name in (
         "calm",
-        "mass+10",
-        "wind2", "wind5", "wind_up3", "wind_down3",
+        "mass_drop_300g",
+        "wind5", "wind_up3", "wind_down3",
         "imu_noise",
         "worst_case",
     )
@@ -77,13 +82,16 @@ PROFILE_GATES: dict[str, dict[str, tuple[str, float]]] = {
 #   2. The drone's *target altitude* is the median of those airborne samples
 #      -- whatever the takeoff/mission script told it to hover at. We don't
 #      need to read it from a log event; it's the most-visited altitude.
-#   3. Hover window starts when altitude first reaches target - HOVER_ENTRY_M
-#      (drone has arrived at hover altitude, within 2 cm).
+#   3. Hover window starts the moment altitude first reaches target -
+#      HOVER_ENTRY_M (drone has arrived, within 2 cm). NO settling trim --
+#      a clean RL controller might arrive without overshoot and we want
+#      those samples in the score, not silently dropped.
 #   4. Hover window ends at the last sample where altitude is still within
 #      HOVER_EXIT_M of target (drone has not yet clearly descended). The
 #      50 cm slack tolerates disturbance excursions -- e.g. updraft / downdraft
 #      pushing the drone temporarily off altitude is part of the test, not a
-#      reason to clip the window.
+#      reason to clip the window. There is NO upper duration cap; the
+#      window runs as long as the takeoff script holds the drone in hover.
 #
 # Critically: NO "is the drone steady" filter. The previous version required
 # |vz| < 0.3 m/s, which excluded the very samples where the controller was
@@ -92,16 +100,27 @@ PROFILE_GATES: dict[str, dict[str, tuple[str, float]]] = {
 # through "drone began clear descent", and disturbance response is included
 # in the metrics computed over that window.
 #
-# Gates assume a WINDOW_DURATION_S window. If the actual hover lasts less
-# than MIN_USABLE_WINDOW_S, the run is marked unscoreable (short hover) and
-# fails the gate explicitly.
+# If the actual hover lasts less than MIN_USABLE_WINDOW_S, the run is
+# marked unscoreable (short hover) and fails the gate explicitly.
 AIRBORNE_THRESHOLD_M = 0.3        # alt > this counts as "off the ground"
-HOVER_ENTRY_M = 0.02              # within 2 cm of target = "arrived at hover"
-HOVER_EXIT_M = 0.50               # within 50 cm of target = "still hovering"
-SETTLING_TRIM_S = 2.0             # skip first N s after arrival so metrics
-                                  # reflect post-settling steady-state, not
-                                  # the brief transient as the drone arrives
-WINDOW_DURATION_S = 60.0
+HOVER_ENTRY_M = 0.05              # within 5 cm of target = "arrived at hover"
+SETTLING_TRIM_S = 0.0             # no trim — RL with clean low-overshoot
+                                  # arrivals gets credit for early samples.
+# Fixed-duration hover window in SIM-SECONDS. Cross-run comparison is now
+# apples-to-apples — every run gets graded on the first WINDOW_DURATION_S
+# seconds after arrival, regardless of how long the actual hover lasted or
+# how it ended.
+#
+# Why 10 and not 30 (matching arm_hover.HOLD_SECONDS): arm_hover holds for
+# 30 WALL-clock seconds via time.time(), but Isaac+SITL run at ~40 % of
+# realtime on this rig, so 30 wall-seconds yields ~12 sim-seconds of actual
+# hover. The metric uses sim-time (state samples are timestamped in sim-t).
+# 10 sim-s comfortably fits inside what every clean hover delivers.
+#
+# If Isaac throughput improves (or arm_hover is rewired to hold by sim-t
+# instead of wall-t), this can be raised. For now, 10 s == "the actual
+# hover phase the drone flies".
+WINDOW_DURATION_S = 10.0
 MIN_USABLE_WINDOW_S = 5.0
 STATE_TIMESTEP_S = 0.02           # bridge logs at 50 Hz -> 0.02 s per sample
 CRASH_DROP_PER_SEC_M = 5.0        # alt drops faster than this -> crash
@@ -146,6 +165,13 @@ class HoverMetrics:
     pos_max_east_m: float | None = None
     gyro_rms: float | None = None
     gyro_peak: float | None = None
+    # Truth-channel gyro (pre-IMU-noise). Equal to gyro_rms / gyro_peak on
+    # profiles that don't inject IMU noise (calm, wind*, mass_drop_*). On
+    # imu_noise / worst_case these isolate the actual attitude motion from
+    # the synthetic sensor noise so cross-profile comparison isn't biased
+    # by how aggressive the noise model is.
+    gyro_rms_truth: float | None = None
+    gyro_peak_truth: float | None = None
     roll_std: float | None = None
     pitch_std: float | None = None
     # Per-axis RMS tilt over the hover window (radians) -- gated.
@@ -196,21 +222,21 @@ def find_hover_window(
 ) -> tuple[float | None, float | None, float | None]:
     """Return (t0, t1, target_alt) for the hover window.
 
-    See the module-level "Window selection knobs" comment for the full
-    rationale. Briefly:
-      - target_alt   = median of airborne samples
-      - t_arrived    = first sample at or above target - HOVER_ENTRY_M (~2 cm)
-      - t0           = t_arrived + SETTLING_TRIM_S  (skip arrival transient)
-      - t1           = last sample within HOVER_EXIT_M (~50 cm) of target
+    Logic:
+      - target_alt = median of airborne samples
+      - t0 = first sample within HOVER_ENTRY_M (5 cm) of target altitude
+      - t1 = t0 + WINDOW_DURATION_S, OR earlier if the drone descends below
+             AIRBORNE_THRESHOLD_M (0.3 m) before then.
 
-    The settling trim means the window represents *steady-state hover*, not
-    "drone just got here and is still ringing". RMS over [t0, t1] reflects
-    how well the controller HOLDS position once arrived.
+    Every run is graded on the SAME fixed duration after arrival, so
+    cross-run comparison is fair regardless of how long the actual hover
+    lasted (some runs may overshoot the script's intended duration; some
+    may crash early). WINDOW_DURATION_S should match the takeoff script's
+    intended hover hold time.
 
     Returns (None, None, None) if the drone never reached hover altitude.
-    Returns (None, None, target) if it did but the post-trim window is empty.
-    Window is capped to WINDOW_DURATION_S from t0 (so a 5-minute hover gets
-    the first 60 s scored, not the whole thing).
+    Returns (None, None, target) if the usable window is shorter than
+    MIN_USABLE_WINDOW_S.
     """
     if not states:
         return None, None, None
@@ -220,31 +246,33 @@ def find_hover_window(
         return None, None, None
 
     entry_alt = target - HOVER_ENTRY_M
-    exit_alt = target - HOVER_EXIT_M
 
     t_arrived: float | None = None
-    t_last_in: float | None = None
     for s in states:
         alt = -float(s["pos_ned"][2])
+        if alt >= entry_alt:
+            t_arrived = float(s["t"])
+            break
+    if t_arrived is None:
+        return None, None, target
+
+    # Walk forward looking for the first descent below AIRBORNE_THRESHOLD_M
+    # after arrival; that caps the window if it happens before
+    # t_arrived + WINDOW_DURATION_S.
+    t_descended = float(states[-1]["t"])
+    for s in states:
         t = float(s["t"])
-        if t_arrived is None:
-            if alt >= entry_alt:
-                t_arrived = t
-                t_last_in = t
+        if t <= t_arrived:
             continue
-        if alt >= exit_alt:
-            t_last_in = t
+        alt = -float(s["pos_ned"][2])
+        if alt < AIRBORNE_THRESHOLD_M:
+            t_descended = t
+            break
 
-    if t_arrived is None or t_last_in is None:
+    t0 = t_arrived + SETTLING_TRIM_S  # SETTLING_TRIM_S = 0 by default
+    t1 = min(t0 + WINDOW_DURATION_S, t_descended)
+    if t1 - t0 < MIN_USABLE_WINDOW_S:
         return None, None, target
-
-    t0 = t_arrived + SETTLING_TRIM_S
-    t1 = t_last_in
-    if t0 >= t1:
-        # Hover was shorter than the settling trim; nothing left to grade.
-        return None, None, target
-    if (t1 - t0) > WINDOW_DURATION_S:
-        t1 = t0 + WINDOW_DURATION_S
     return t0, t1, target
 
 
@@ -347,8 +375,14 @@ def compute_metrics(
     rolls = [float(s["rpy"][0]) for s in win]
     pitches = [float(s["rpy"][1]) for s in win]
 
-    # Gyro magnitude per sample, then RMS and peak.
+    # Gyro magnitude per sample, then RMS and peak. The bridge optionally
+    # logs `gyro_frd_truth` (pre-IMU-noise) on profiles that inject noise;
+    # when absent, truth == post-noise (calm logs, older logs).
     gyro_mags = [_norm([float(g) for g in s["gyro_frd"]]) for s in win]
+    gyro_mags_truth = [
+        _norm([float(g) for g in s.get("gyro_frd_truth", s["gyro_frd"])])
+        for s in win
+    ]
 
     # XY drift: peak distance from window-mean center.
     if xs and ys:
@@ -374,6 +408,8 @@ def compute_metrics(
     metrics.pitch_max_rad = max(abs(p) for p in pitches) if pitches else 0.0
     metrics.gyro_rms = _rms(gyro_mags)
     metrics.gyro_peak = max(gyro_mags) if gyro_mags else 0.0
+    metrics.gyro_rms_truth = _rms(gyro_mags_truth)
+    metrics.gyro_peak_truth = max(gyro_mags_truth) if gyro_mags_truth else 0.0
 
     # xy_recovery_s: time to return inside ±0.3 m of window-mean after the
     # max excursion sample. Only meaningful for wind profile, but cheap to
@@ -431,7 +467,11 @@ def _format_table(m: HoverMetrics) -> str:
             ("xy_excursion_max_m", f"{m.xy_excursion_max_m:.3f}"),
             ("xy_recovery_s", f"{m.xy_recovery_s:.2f}" if m.xy_recovery_s is not None else "-"),
             ("gyro_rms", f"{m.gyro_rms:.4f}"),
+            ("gyro_rms_truth", f"{m.gyro_rms_truth:.4f}"
+                if m.gyro_rms_truth is not None else "-"),
             ("gyro_peak", f"{m.gyro_peak:.4f}"),
+            ("gyro_peak_truth", f"{m.gyro_peak_truth:.4f}"
+                if m.gyro_peak_truth is not None else "-"),
             ("roll_std", f"{m.roll_std:.4f}"),
             ("pitch_std", f"{m.pitch_std:.4f}"),
         ]

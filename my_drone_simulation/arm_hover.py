@@ -29,7 +29,12 @@ import time
 
 MASTER = "udpin:localhost:14551"
 TAKEOFF_ALT = 3.0
-HOLD_SECONDS = 30.0         # how long to actively hold position after reaching altitude
+HOLD_SECONDS = 30.0         # how long to actively hold position after reaching altitude.
+                            # NOTE: this is WALL-CLOCK seconds (time.time()), but Isaac+SITL
+                            # run at ~40 % of realtime on the dev rig, so 30 wall-seconds
+                            # delivers ~12 sim-seconds of actual hover. The metric window
+                            # in capstone.control.metrics is set in SIM-seconds (10 s),
+                            # which fits inside whatever this script actually delivers.
 HOLD_SEND_HZ = 5            # position-target refresh rate (GUIDED requires regular updates)
 
 # Bench-test fallback

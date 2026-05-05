@@ -6,9 +6,10 @@ one JSON object per line. Three sources:
   src=bridge       lifecycle events: bridge_setup_started, motor_model_calibrated,
                    home_locked, shutdown, errors. Always have `event` key.
   src=isaac->sitl  state telemetry @50 Hz max (STATE_LOG_PERIOD_S=0.02):
-                   gyro_frd, accel_frd, pos_ned, vel_ned, rpy, heading_deg,
-                   home_locked.
-  src=sitl->isaac  PWM packets from ArduCopter: pwm[4], magic, frame, addr.
+                   gyro_frd, accel_frd, pos_ned, vel_ned, rpy, home_locked,
+                   payload_kg, thrust_total_N, optional wind_world.
+  src=sitl->isaac  PWM packets from ArduCopter: pwm[4]. (magic / frame_first
+                   / addr captured once in the `first_sitl_packet` event.)
 
 Coordinate conventions (from the bridge):
   pos_ned, vel_ned: NED frame anchored at home-lock, +D = down (so altitude
