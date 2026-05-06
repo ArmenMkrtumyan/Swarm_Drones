@@ -24,8 +24,10 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-IMAGES_DIR = OUTPUTS_DIR / "images"
 MAPS_DIR = OUTPUTS_DIR / "maps"
+PLOTS_DIR = OUTPUTS_DIR / "png"        # PNG figures: random search progress, sweep plots, etc.
+DATA_DIR = OUTPUTS_DIR / "csv_txt"     # raw data tables (.csv) and ranked-top summaries (.txt)
+MARL_DIR = OUTPUTS_DIR / "marl"        # PPO checkpoint .zip files
 
 # ---------------------------------------------------------------------------
 # Visual styling (used by visualize.py and editor.py)

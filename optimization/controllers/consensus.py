@@ -51,6 +51,10 @@ class ConsensusConfig:
     Tunable knobs. Repulsion gains intentionally match PF defaults so the
     only difference between the two controllers is the attractor (centroid
     vs. nearest uncovered cell).
+
+    Same `sparse()` / `dense()` preset story as PF — see those classmethods
+    below. Sparse swarms gain less from tuning here than for PF (the
+    Voronoi attractor already enforces territory partition).
     """
     attract_gain: float = 1.5
 
@@ -79,6 +83,38 @@ class ConsensusConfig:
     #     consensus property (each drone owns its territory) while being
     #     aggressive enough to actually clear that territory.
     target_strategy: str = "nearest"   # "nearest" | "centroid"
+
+    @classmethod
+    def sparse(cls) -> "ConsensusConfig":
+        """
+        Preset tuned for sparse swarms (n ≤ 2). Tuned via
+        `tools/grid_search.py --policy consensus --drones 2`; lifts
+        composite score modestly (+0.514 → +0.532 on partial_33 × n=2).
+        """
+        return cls(
+            attract_gain=1.5,
+            drone_repel_gain=2.0,
+            drone_repel_range=2.5,
+        )
+
+    @classmethod
+    def dense(cls) -> "ConsensusConfig":
+        """
+        Same 7-knob config as `PFConfig.dense()` — both controllers share
+        the dense-swarm optimum, which suggests the gain comes from the
+        underlying force dynamics rather than the attractor type. Tuned via
+        `tools/random_search.py --policy consensus --trials 100` at n=5
+        partial_33; composite score +0.629 vs default +0.533.
+        """
+        return cls(
+            attract_gain=2.22,
+            drone_repel_gain=4.13,
+            drone_repel_range=3.93,
+            wall_repel_gain=3.48,
+            wall_repel_range=1.43,
+            yaw_align_gain=2.94,
+            velocity_align_threshold=0.152,
+        )
 
 
 class ConsensusController:

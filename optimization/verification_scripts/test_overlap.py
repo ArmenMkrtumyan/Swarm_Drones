@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from constants import IMAGES_DIR
+from constants import PLOTS_DIR
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import FREE, WALL
 from visualize import init_drone_palette, render_frame
@@ -153,7 +153,7 @@ def _scripted_steps():
 
 def run_headless(env: CoverageEnv) -> bool:
     """Original PNG-and-assertions mode. Returns True iff every check passed."""
-    out_dir = IMAGES_DIR
+    out_dir = PLOTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     render_frame(env, save_path=str(out_dir / "test_overlap_00_initial.png"))
     _print_metrics(env, "Phase 0 — initial placement")

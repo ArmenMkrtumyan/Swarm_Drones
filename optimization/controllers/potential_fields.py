@@ -52,6 +52,11 @@ class PFConfig:
     All gains are in world-acceleration units (cells/s²) BEFORE the
     `max_accel` magnitude clip — they're the "raw" forces, the env
     handles saturation. Raising a gain makes that term dominate.
+
+    The defaults are a middle-ground compromise that works at every swarm
+    size we tested (verified by `tools/verify_tuned.py`). For best
+    performance at the extremes, use the `sparse()` / `dense()` presets
+    below — both come from `tools/grid_search.py` runs on partial_33.
     """
     # Attractive pull toward the nearest uncovered cell. 1.0 means the unit
     # vector toward target is added to F_total at full strength.
@@ -73,6 +78,42 @@ class PFConfig:
     # don't yaw (heading_error is undefined for stationary drones).
     yaw_align_gain: float = 6.0
     velocity_align_threshold: float = 0.05    # cells/s
+
+    @classmethod
+    def sparse(cls) -> "PFConfig":
+        """
+        Preset tuned for sparse swarms (n ≤ 2). Drones rarely meet, so the
+        big drone-repel terms in the defaults just slow attraction without
+        helping. Lower `attract_gain` reduces oscillation around the target;
+        small `drone_repel_range` keeps repulsion local. Tuned via
+        `tools/grid_search.py --policy pf --drones 2`; lifts composite score
+        from +0.415 to +0.548 on partial_33 × n=2.
+        """
+        return cls(
+            attract_gain=1.0,
+            drone_repel_gain=1.0,
+            drone_repel_range=0.5,
+        )
+
+    @classmethod
+    def dense(cls) -> "PFConfig":
+        """
+        Preset tuned for crowded swarms (n ≥ 10). All 7 knobs tuned via
+        `tools/random_search.py --policy pf --trials 100` at n=5 partial_33;
+        refined search confirmed the optimum is robust. Composite score
+        +0.600 vs default +0.407. Notable: lower `yaw_align_gain` and higher
+        `velocity_align_threshold` than defaults — random search found that
+        less aggressive yaw improves coverage.
+        """
+        return cls(
+            attract_gain=2.22,
+            drone_repel_gain=4.13,
+            drone_repel_range=3.93,
+            wall_repel_gain=3.48,
+            wall_repel_range=1.43,
+            yaw_align_gain=2.94,
+            velocity_align_threshold=0.152,
+        )
 
 
 class PotentialFieldsController:

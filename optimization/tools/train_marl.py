@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from constants import OUTPUTS_DIR
+from constants import MARL_DIR
 from controllers.marl_env import CoverageGymEnv
 
 try:
@@ -95,8 +95,28 @@ def parse_args() -> argparse.Namespace:
                    help="parallel envs for PPO rollout (default 4)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str,
-                   default=str(OUTPUTS_DIR / "marl_ppo.zip"),
+                   default=str(MARL_DIR / "marl_ppo.zip"),
                    help="output checkpoint path")
+    # Reward shaping (defaults preserve the original reward exactly):
+    p.add_argument("--overlap-penalty-per-m2", type=float, default=0.0,
+                   help="reward penalty per m² of new overlap each step "
+                        "(swarm-wide delta of env.overlap_cells_m2). 0 = off.")
+    p.add_argument("--wasted-visit-penalty", type=float, default=0.0,
+                   help="reward penalty per wasted-visit event each step "
+                        "(swarm-wide delta of env.wasted_visits_total). 0 = off.")
+    p.add_argument("--energy-penalty-per-kj", type=float, default=0.0,
+                   help="reward penalty per kJ of swarm-wide energy spent "
+                        "each step. 0 = off.")
+    # PPO hyperparams (defaults match the original baseline). Useful for
+    # promoting a random-search winner to full training budget.
+    p.add_argument("--learning-rate", type=float, default=3e-4)
+    p.add_argument("--n-steps", type=int, default=512)
+    p.add_argument("--batch-size", type=int, default=128)
+    p.add_argument("--n-epochs", type=int, default=10)
+    p.add_argument("--gamma", type=float, default=0.99)
+    p.add_argument("--gae-lambda", type=float, default=0.95)
+    p.add_argument("--clip-range", type=float, default=0.2)
+    p.add_argument("--ent-coef", type=float, default=0.005)
     return p.parse_args()
 
 
@@ -106,6 +126,12 @@ def main() -> None:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    shaping_on = (
+        args.overlap_penalty_per_m2 != 0.0
+        or args.wasted_visit_penalty != 0.0
+        or args.energy_penalty_per_kj != 0.0
+    )
+
     print("=== Training shared-policy PPO on CoverageGymEnv ===")
     print(f"  grid_size:      {args.grid}")
     print(f"  n_drones:       {args.drones}")
@@ -114,6 +140,12 @@ def main() -> None:
     print(f"  max ep steps:   {args.max_ep_steps:,}")
     print(f"  parallel envs:  {args.n_envs}")
     print(f"  output:         {out_path}")
+    if shaping_on:
+        print(f"  reward shaping: overlap×{args.overlap_penalty_per_m2}/m²  "
+              f"wasted×{args.wasted_visit_penalty}  "
+              f"energy×{args.energy_penalty_per_kj}/kJ")
+    else:
+        print(f"  reward shaping: off (defaults — original reward only)")
     print()
 
     def make_one_env():
@@ -122,6 +154,9 @@ def main() -> None:
             n_drones=args.drones,
             max_steps=args.max_ep_steps,
             map_kind=args.map_kind,
+            overlap_penalty_per_m2=args.overlap_penalty_per_m2,
+            wasted_visit_penalty=args.wasted_visit_penalty,
+            energy_penalty_per_kj=args.energy_penalty_per_kj,
         )
 
     vec_env = make_vec_env(make_one_env, n_envs=args.n_envs, seed=args.seed)
@@ -137,16 +172,14 @@ def main() -> None:
         vec_env,
         # Smaller MLP than SB3 default (64×64 → enough for our 96-dim obs)
         policy_kwargs=dict(net_arch=[128, 128]),
-        learning_rate=3e-4,
-        n_steps=512,
-        batch_size=128,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        # Lower entropy bonus than SB3 default — prevents the policy from
-        # drifting back to random late in training.
-        ent_coef=0.005,
+        learning_rate=args.learning_rate,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_range=args.clip_range,
+        ent_coef=args.ent_coef,
         verbose=1,
         seed=args.seed,
         device="cpu",   # MLP this small is faster on CPU than M1 MPS overhead

@@ -43,8 +43,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from constants import IMAGES_DIR, OUTPUTS_DIR
+from constants import DATA_DIR, MARL_DIR, PLOTS_DIR
 from controllers import ConsensusController, PotentialFieldsController
+from controllers.consensus import ConsensusConfig
+from controllers.potential_fields import PFConfig
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import load_map
 
@@ -54,8 +56,9 @@ POLICY_COLORS = {
     "PF":        "#1f77b4",
     "Consensus": "#2ca02c",
     "MARL":      "#d62728",
+    "MARL+S":    "#9467bd",   # shaped-reward variant
 }
-POLICY_ORDER = ["Random", "PF", "Consensus", "MARL"]
+POLICY_ORDER = ["Random", "PF", "Consensus", "MARL", "MARL+S"]
 
 
 @dataclass
@@ -165,6 +168,23 @@ def make_marl(n_drones: int, marl_base: str) -> Optional[Callable]:
     path_str = marl_base.format(n=n_drones)
     if not Path(path_str).exists():
         print(f"  [warn] MARL checkpoint missing for n={n_drones}: {path_str}")
+        return None
+    return MARLController(checkpoint=path_str, deterministic=False,
+                          hover_drone_idx=None)
+
+
+def make_marl_shaped(n_drones: int, base: str) -> Optional[Callable]:
+    """Same as make_marl but for the reward-shaped checkpoint set. Kept as a
+    sibling so the [warn] line clearly attributes the missing path."""
+    try:
+        from controllers import MARLController
+    except ImportError:
+        return None
+    if MARLController is None:
+        return None
+    path_str = base.format(n=n_drones)
+    if not Path(path_str).exists():
+        print(f"  [warn] MARL+S checkpoint missing for n={n_drones}: {path_str}")
         return None
     return MARLController(checkpoint=path_str, deterministic=False,
                           hover_drone_idx=None)
@@ -329,9 +349,14 @@ def parse_args():
     p.add_argument("--seeds-per-config", type=int, default=3,
                    help="seeds per (map, n_drones) cell (default 3)")
     p.add_argument("--marl-base", type=str,
-                   default=str(OUTPUTS_DIR / "marl_ppo_n{n}.zip"),
+                   default=str(MARL_DIR / "marl_ppo_n{n}.zip"),
                    help="checkpoint path template; '{n}' is replaced with the "
-                        "drone count. Default: outputs/marl_ppo_n{n}.zip")
+                        "drone count. Default: outputs/marl/marl_ppo_n{n}.zip")
+    p.add_argument("--marl-shaped-base", type=str, default=None,
+                   help="optional second MARL checkpoint set with reward "
+                        "shaping; '{n}' is replaced with the drone count. "
+                        "When set, runs as a separate policy 'MARL+S' "
+                        "alongside the default 'MARL' for direct comparison.")
     p.add_argument("--skip-marl", action="store_true",
                    help="skip MARL entirely (don't try to load any checkpoint)")
     return p.parse_args()
@@ -359,12 +384,21 @@ def main():
     seeds = list(range(args.seeds_per_config))
 
     # Build base policies once. PF and Consensus are stateless and reusable.
-    pf = PotentialFieldsController(hover_drone_idx=None)
-    consensus = ConsensusController(hover_drone_idx=None)
+    # Use the `dense()` preset (random-search winner over all 7 knobs at n=5
+    # partial_33). It dominates the default at most operating points; the
+    # rare regression at n=2 is a known trade-off (wider repel range hurts
+    # when drones are sparse).
+    pf = PotentialFieldsController(cfg=PFConfig.dense(), hover_drone_idx=None)
+    consensus = ConsensusController(cfg=ConsensusConfig.dense(), hover_drone_idx=None)
 
+    n_policies = 3
+    if not args.skip_marl:
+        n_policies += 1
+        if args.marl_shaped_base is not None:
+            n_policies += 1
     total_runs = (
         len(maps) * len(args.drones_list)
-        * (3 if args.skip_marl else 4)
+        * n_policies
         * len(seeds)
     )
     print(f"\n=== Sweep — {total_runs} runs total ===")
@@ -379,12 +413,17 @@ def main():
         for n_drones in args.drones_list:
             # MARL must be loaded once per drone count.
             marl = None
+            marl_shaped = None
             if not args.skip_marl:
                 marl = make_marl(n_drones, args.marl_base)
+                if args.marl_shaped_base is not None:
+                    marl_shaped = make_marl_shaped(n_drones, args.marl_shaped_base)
 
             policies = [("Random", None), ("PF", pf), ("Consensus", consensus)]
             if marl is not None:
                 policies.append(("MARL", marl))
+            if marl_shaped is not None:
+                policies.append(("MARL+S", marl_shaped))
 
             for policy_name, policy_fn in policies:
                 for seed in seeds:
@@ -406,8 +445,9 @@ def main():
     print(f"\nTotal wall time: {time.time() - t0:.1f} s\n")
 
     # CSV
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = IMAGES_DIR / "sweep_results.csv"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = DATA_DIR / "sweep_results.csv"
     with csv_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0].headline().keys()))
         w.writeheader()
@@ -418,21 +458,21 @@ def main():
     # Plots
     plot_coverage_vs_drones(
         results, args.drones_list,
-        IMAGES_DIR / "sweep_coverage_vs_drones.png",
+        PLOTS_DIR / "sweep_coverage_vs_drones.png",
     )
     plot_time_to_80_vs_drones(
         results, args.drones_list,
-        IMAGES_DIR / "sweep_time_to_80_vs_drones.png",
+        PLOTS_DIR / "sweep_time_to_80_vs_drones.png",
     )
     plot_efficiency_vs_drones(
         results, args.drones_list,
-        IMAGES_DIR / "sweep_efficiency_vs_drones.png",
+        PLOTS_DIR / "sweep_efficiency_vs_drones.png",
     )
     plot_curves_grid(
         results, args.drones_list,
-        IMAGES_DIR / "sweep_curves_grid.png",
+        PLOTS_DIR / "sweep_curves_grid.png",
     )
-    print(f"Wrote 4 sweep plots to {IMAGES_DIR}/")
+    print(f"Wrote 4 sweep plots to {PLOTS_DIR}/")
 
     # Summary
     print("\n=== Mean final coverage by (map × policy × n_drones) ===")

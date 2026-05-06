@@ -58,8 +58,8 @@ class MARLController:
             ) from e
 
         if checkpoint is None:
-            from constants import OUTPUTS_DIR
-            checkpoint = str(OUTPUTS_DIR / "marl_ppo.zip")
+            from constants import MARL_DIR
+            checkpoint = str(MARL_DIR / "marl_ppo.zip")
         path = Path(checkpoint)
         if not path.exists():
             raise FileNotFoundError(

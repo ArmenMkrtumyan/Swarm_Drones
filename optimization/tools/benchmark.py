@@ -46,7 +46,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from constants import IMAGES_DIR, OUTPUTS_DIR
+from constants import DATA_DIR, MARL_DIR, PLOTS_DIR
 from controllers import (
     ConsensusController,
     MARLController,
@@ -327,7 +327,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grid", type=int, default=15)
     p.add_argument("--drones", type=int, default=4)
     p.add_argument("--marl-checkpoint", type=str,
-                   default=str(OUTPUTS_DIR / "marl_ppo.zip"))
+                   default=str(MARL_DIR / "marl_ppo.zip"))
     p.add_argument("--skip-marl", action="store_true",
                    help="skip MARL (e.g., if checkpoint missing)")
     p.add_argument("--marl-stochastic", action="store_true",
@@ -393,8 +393,9 @@ def main() -> None:
     print(f"Total wall time: {time.time() - t0:.1f} s\n")
 
     # ---- write CSV ----
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = IMAGES_DIR / "benchmark_results.csv"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = DATA_DIR / "benchmark_results.csv"
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(results[0].headline_dict().keys()))
         writer.writeheader()
@@ -403,9 +404,9 @@ def main() -> None:
     print(f"Wrote: {csv_path}")
 
     # ---- plots ----
-    out_curve = IMAGES_DIR / "benchmark_coverage_curves.png"
-    out_bars = IMAGES_DIR / "benchmark_summary_bars.png"
-    out_per_map = IMAGES_DIR / "benchmark_per_map.png"
+    out_curve = PLOTS_DIR / "benchmark_coverage_curves.png"
+    out_bars = PLOTS_DIR / "benchmark_summary_bars.png"
+    out_per_map = PLOTS_DIR / "benchmark_per_map.png"
 
     plot_coverage_curves(results, out_curve)
     plot_metric_bars(results, out_bars)
@@ -414,7 +415,7 @@ def main() -> None:
     # Per-map curves too — splits the story when one map type behaves differently.
     for mk in map_kinds:
         sub = [r for r in results if r.map_kind == mk]
-        out = IMAGES_DIR / f"benchmark_coverage_curves_{mk}.png"
+        out = PLOTS_DIR / f"benchmark_coverage_curves_{mk}.png"
         plot_coverage_curves(sub, out, title_suffix=f"  ({mk} maps)")
         print(f"Wrote: {out}")
 

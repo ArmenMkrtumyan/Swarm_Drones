@@ -9,14 +9,16 @@ Each controller is a callable matching the policy contract used by
 Returning [ax, ay, alpha_yaw] per drone in world frame. Shape (n_drones, 2)
 is also accepted by env.step (treated as alpha_yaw = 0).
 
-Three families live here, in increasing complexity:
-    - PotentialFieldsController (potential_fields.py)
-    - ConsensusController       (consensus.py)
-    - MARLController            (marl.py — wraps a trained PPO policy)
+Four families live here:
+    - PotentialFieldsController (potential_fields.py) — Track 3 (control)
+    - ConsensusController       (consensus.py)        — Track 3 (control)
+    - MARLController            (marl.py)             — Track 3 (learning, PPO)
+    - PSOController             (pso.py)              — Track 2 (metaheuristic)
 """
 
 from .potential_fields import PotentialFieldsController, PFConfig
 from .consensus import ConsensusController, ConsensusConfig
+from .pso import PSOController, PSOConfig
 
 # MARL is gated on torch + stable-baselines3 being installed. Import
 # lazily so the package still works for PF / Consensus users without
@@ -36,4 +38,6 @@ __all__ = [
     "ConsensusController",
     "ConsensusConfig",
     "MARLController",
+    "PSOController",
+    "PSOConfig",
 ]

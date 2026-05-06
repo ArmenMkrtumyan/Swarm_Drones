@@ -37,8 +37,8 @@ from constants import (
     DEFAULT_N_DRONES,
     DEFAULT_OBSTACLE_DENSITY,
     DEFAULT_SEED,
-    IMAGES_DIR,
-    OUTPUTS_DIR,
+    MARL_DIR,
+    PLOTS_DIR,
 )
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import load_map, random_obstacles, recursive_backtracker
@@ -337,8 +337,8 @@ def main() -> None:
         # Prefer per-n-drones checkpoint if it exists (matches benchmark naming).
         ckpt = args.marl_checkpoint
         if ckpt is None:
-            per_n = OUTPUTS_DIR / f"marl_ppo_n{args.drones}.zip"
-            default = OUTPUTS_DIR / "marl_ppo.zip"
+            per_n = MARL_DIR / f"marl_ppo_n{args.drones}.zip"
+            default = MARL_DIR / "marl_ppo.zip"
             ckpt = str(per_n if per_n.exists() else default)
         policy_fn = MARLController(
             checkpoint=ckpt,
@@ -383,8 +383,8 @@ def main() -> None:
     if args.gui:
         gif_path = None
         if args.save is not None:
-            IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-            gif_path = str(IMAGES_DIR / f"{prefix}animation.gif")
+            PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+            gif_path = str(PLOTS_DIR / f"{prefix}animation.gif")
         animate(env, policy_fn, interactive=True, save_path=gif_path)
         print(f"\n*** {_completion_reason(env)} ***")
         _print_final_batteries(env)
@@ -394,10 +394,10 @@ def main() -> None:
             print(f"saved animation: {gif_path}")
         return
 
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    initial = IMAGES_DIR / f"{prefix}demo_initial.png"
-    final = IMAGES_DIR / f"{prefix}demo_final.png"
-    curve = IMAGES_DIR / f"{prefix}coverage_curve.png"
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    initial = PLOTS_DIR / f"{prefix}demo_initial.png"
+    final = PLOTS_DIR / f"{prefix}demo_final.png"
+    curve = PLOTS_DIR / f"{prefix}coverage_curve.png"
 
     render_frame(env, save_path=str(initial))
 
@@ -424,7 +424,7 @@ def main() -> None:
     mode_label = "saved" if args.save is not None else "scratch (overwritten next run)"
     print()
     print(f"wrote [{mode_label}]: {initial.name}, {final.name}, {curve.name}")
-    print(f"  in: {IMAGES_DIR}")
+    print(f"  in: {PLOTS_DIR}")
 
 
 if __name__ == "__main__":

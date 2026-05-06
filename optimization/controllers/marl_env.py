@@ -25,11 +25,19 @@ Action per drone: 2D acceleration in [-1, 1] (x and y), scaled to
 as PF / Consensus controllers — we don't ask the policy to learn yaw).
 Joint action: shape (n_drones * 2,).
 
-Reward per step:
-    + coverage_delta_cells * 1.0       new free cells covered this step
+Reward per step (all weights configurable; defaults preserve original behavior):
+    + coverage_delta_cells * 1.0        new free cells covered this step
     - 0.01                              time penalty (encourage finishing)
+    - overlap_penalty_per_m2 * Δoverlap_m2          (default 0.0)
+    - wasted_visit_penalty   * Δwasted_visits      (default 0.0)
+    - energy_penalty_per_kj  * Δenergy_kj          (default 0.0)
     + 100.0 on terminal if coverage = 100 %
     - 20.0 on terminal if every drone depleted before reaching 100 %
+
+The three Δ-shaping terms are *swarm-wide deltas* between consecutive
+steps. They default to zero so an unconfigured env reproduces the original
+reward exactly. Set them via the CoverageGymEnv constructor (or the
+matching CLI flags in `tools/train_marl.py`).
 
 Episode terminates when env.is_terminal() OR step cap reached.
 """
@@ -90,6 +98,9 @@ class CoverageGymEnv(gym.Env):
         max_steps: int = 1500,
         map_kind: str = "random",
         seed: Optional[int] = None,
+        overlap_penalty_per_m2: float = 0.0,
+        wasted_visit_penalty: float = 0.0,
+        energy_penalty_per_kj: float = 0.0,
     ) -> None:
         super().__init__()
         self.grid_size = grid_size
@@ -97,6 +108,9 @@ class CoverageGymEnv(gym.Env):
         self.max_steps = max_steps
         self.map_kind = map_kind
         self._rng = np.random.default_rng(seed)
+        self.overlap_penalty_per_m2 = float(overlap_penalty_per_m2)
+        self.wasted_visit_penalty = float(wasted_visit_penalty)
+        self.energy_penalty_per_kj = float(energy_penalty_per_kj)
 
         self.observation_space = spaces.Box(
             low=-3.0, high=3.0,
@@ -113,6 +127,9 @@ class CoverageGymEnv(gym.Env):
         self.env: Optional[CoverageEnv] = None
         self.steps = 0
         self._covered_count_prev = 0
+        self._overlap_m2_prev = 0.0
+        self._wasted_visits_prev = 0
+        self._battery_total_prev = 0.0
 
     # ------------------------------------------------------------------
     # gym API
@@ -137,6 +154,11 @@ class CoverageGymEnv(gym.Env):
         self.env.reset(seed=map_seed)
         self.steps = 0
         self._covered_count_prev = int(self.env.covered.sum())
+        self._overlap_m2_prev = float(self.env.overlap_cells_m2())
+        self._wasted_visits_prev = int(self.env.wasted_visits_total())
+        self._battery_total_prev = float(
+            sum(d.battery_j for d in self.env.drones)
+        )
         return self._observe(), {}
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
@@ -166,6 +188,24 @@ class CoverageGymEnv(gym.Env):
         delta_cells = covered_now - self._covered_count_prev
         self._covered_count_prev = covered_now
         reward = float(delta_cells) - 0.01  # coverage gain - time penalty
+
+        # Optional shaping terms — defaults are 0.0 so the original reward
+        # is preserved bit-exact when no penalties are configured.
+        if self.overlap_penalty_per_m2 != 0.0:
+            overlap_now = float(env.overlap_cells_m2())
+            d_overlap = max(0.0, overlap_now - self._overlap_m2_prev)
+            self._overlap_m2_prev = overlap_now
+            reward -= self.overlap_penalty_per_m2 * d_overlap
+        if self.wasted_visit_penalty != 0.0:
+            wasted_now = int(env.wasted_visits_total())
+            d_wasted = max(0, wasted_now - self._wasted_visits_prev)
+            self._wasted_visits_prev = wasted_now
+            reward -= self.wasted_visit_penalty * float(d_wasted)
+        if self.energy_penalty_per_kj != 0.0:
+            battery_now = float(sum(d.battery_j for d in env.drones))
+            d_energy_j = max(0.0, self._battery_total_prev - battery_now)
+            self._battery_total_prev = battery_now
+            reward -= self.energy_penalty_per_kj * (d_energy_j / 1000.0)
 
         terminated = bool(env.is_terminal())
         truncated = self.steps >= self.max_steps
