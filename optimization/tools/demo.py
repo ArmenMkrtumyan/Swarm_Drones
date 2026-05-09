@@ -47,8 +47,18 @@ from visualize import animate, init_drone_palette, render_frame
 # Lazy-import controllers so PF / Consensus work even when torch isn't
 # installed; only MARL fails-fast on missing torch.
 from controllers import (
+    ACOController,
+    BoustrophedonController,
     ConsensusController,
+    GAController,
+    GWOController,
+    GridDecompositionController,
+    PSOController,
     PotentialFieldsController,
+    SAController,
+    SpiralController,
+    STCController,
+    VoronoiPartitionController,
 )
 
 
@@ -260,7 +270,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument(
         "--policy",
-        choices=["random", "pf", "consensus", "marl"],
+        choices=[
+            "random", "pf", "consensus", "marl",
+            "ga", "pso", "aco", "sa", "gwo",
+            "boustrophedon", "spiral", "voronoi", "grid_decomp", "stc",
+        ],
         default="random",
         help="which controller to run (default: random)",
     )
@@ -327,6 +341,26 @@ def main() -> None:
         policy_fn = PotentialFieldsController(hover_drone_idx=hover_idx)
     elif args.policy == "consensus":
         policy_fn = ConsensusController(hover_drone_idx=hover_idx)
+    elif args.policy == "ga":
+        policy_fn = GAController(hover_drone_idx=hover_idx, seed=args.seed)
+    elif args.policy == "pso":
+        policy_fn = PSOController(hover_drone_idx=hover_idx, seed=args.seed)
+    elif args.policy == "aco":
+        policy_fn = ACOController(hover_drone_idx=hover_idx, seed=args.seed)
+    elif args.policy == "sa":
+        policy_fn = SAController(hover_drone_idx=hover_idx, seed=args.seed)
+    elif args.policy == "gwo":
+        policy_fn = GWOController(hover_drone_idx=hover_idx, seed=args.seed)
+    elif args.policy == "boustrophedon":
+        policy_fn = BoustrophedonController(hover_drone_idx=hover_idx)
+    elif args.policy == "spiral":
+        policy_fn = SpiralController(hover_drone_idx=hover_idx)
+    elif args.policy == "voronoi":
+        policy_fn = VoronoiPartitionController(hover_drone_idx=hover_idx)
+    elif args.policy == "grid_decomp":
+        policy_fn = GridDecompositionController(hover_drone_idx=hover_idx)
+    elif args.policy == "stc":
+        policy_fn = STCController(hover_drone_idx=hover_idx)
     elif args.policy == "marl":
         from controllers import MARLController
         if MARLController is None:

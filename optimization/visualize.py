@@ -120,7 +120,121 @@ def _drone_render_color(i: int, depleted: bool) -> tuple:
     return DEPLETED_DRONE_RGB if depleted else drone_color(i)
 
 
-def _render_map(env: CoverageEnv, ax) -> None:
+def _render_overlay(env: CoverageEnv, ax, overlay: dict) -> None:
+    """
+    Draw controller-specific debug overlays. `overlay` is whatever a controller's
+    `viz_overlay(env)` returned. Recognized keys (all optional):
+
+        regions   : (h, w) int array; cell value = drone index it's owned by
+                    (-1 or any out-of-range value = unowned). Drawn as a faint
+                    tinted overlay using each drone's palette color so the
+                    partition boundaries are visible without obscuring coverage.
+        targets   : (n, 2) array of (x, y) per drone; drawn as a colored "✕"
+                    in the drone's palette color, with a short dashed line from
+                    drone to target.
+        paths     : list of length n_drones, each item a (k, 2) array of cell
+                    positions. Drawn as a faint colored polyline per drone.
+        heatmap   : (h, w) float; rendered as a translucent hot colormap behind
+                    the drones (use for pheromones, attention, etc.).
+        roles     : list[str] length n_drones; small annotation next to each
+                    drone label (e.g., "α", "β", "δ" for GWO).
+        edges     : list of (i, j) tuples; faint line between drones i and j
+                    (e.g., consensus communication graph).
+        title_extra : str; appended to the map title in parentheses.
+    """
+    h, w = env.grid.shape
+
+    # Layer: heatmap (drawn before regions so partitions sit on top).
+    hm = overlay.get("heatmap")
+    if hm is not None and np.isfinite(hm).any():
+        hmf = np.asarray(hm, dtype=float)
+        vmax = float(np.nanmax(hmf))
+        if vmax > 0:
+            ax.imshow(
+                hmf, cmap="hot", origin="upper",
+                extent=(0, w, h, 0), alpha=0.35, vmin=0, vmax=vmax, zorder=0.5,
+            )
+
+    # Layer: per-drone region tints. Skip free/walls cells whose owner index is
+    # out of [0, n_drones) — that's our convention for "unowned".
+    regions = overlay.get("regions")
+    if regions is not None:
+        regions = np.asarray(regions)
+        tint = np.zeros((h, w, 4))
+        for i in range(env.n_drones):
+            mask = regions == i
+            if not np.any(mask):
+                continue
+            r_, g_, b_ = drone_color(i)
+            tint[mask] = (r_, g_, b_, 0.18)
+        ax.imshow(tint, origin="upper", extent=(0, w, h, 0), zorder=0.6)
+
+    # Layer: planned/visited paths per drone — faint colored polylines.
+    paths = overlay.get("paths")
+    if paths is not None:
+        for i, path in enumerate(paths):
+            if path is None or len(path) < 2:
+                continue
+            pa = np.asarray(path, dtype=float)
+            r_, g_, b_ = drone_color(i)
+            ax.plot(
+                pa[:, 0], pa[:, 1],
+                color=(r_, g_, b_), linewidth=0.9, alpha=0.55,
+                linestyle="--", zorder=2.5,
+            )
+
+    # Layer: communication / consensus edges.
+    edges = overlay.get("edges")
+    if edges:
+        pos = env.positions()
+        for (i, j) in edges:
+            if 0 <= i < env.n_drones and 0 <= j < env.n_drones:
+                ax.plot(
+                    [pos[i, 0], pos[j, 0]], [pos[i, 1], pos[j, 1]],
+                    color="black", alpha=0.25, linewidth=0.8,
+                    linestyle=":", zorder=2.2,
+                )
+
+    # Layer: per-drone target markers + dashed line drone→target.
+    targets = overlay.get("targets")
+    if targets is not None:
+        pos = env.positions()
+        for i in range(min(env.n_drones, len(targets))):
+            t = targets[i]
+            if t is None:
+                continue
+            t = np.asarray(t, dtype=float).reshape(-1)
+            if t.size < 2 or not np.isfinite(t[:2]).all():
+                continue
+            r_, g_, b_ = drone_color(i)
+            ax.plot(
+                [pos[i, 0], t[0]], [pos[i, 1], t[1]],
+                color=(r_, g_, b_), alpha=0.45, linewidth=0.9,
+                linestyle=":", zorder=4.5,
+            )
+            ax.scatter(
+                [t[0]], [t[1]], marker="x",
+                c=[(r_, g_, b_)], s=70, linewidths=1.8, zorder=5,
+            )
+
+    # Layer: role labels (alpha/beta/delta etc.) drawn next to each drone.
+    roles = overlay.get("roles")
+    if roles:
+        pos = env.positions()
+        for i, role in enumerate(roles):
+            if not role or i >= env.n_drones:
+                continue
+            ax.annotate(
+                role, (pos[i, 0], pos[i, 1]),
+                xytext=(6, 6), textcoords="offset points",
+                fontsize=DRONE_LABEL_FONTSIZE, color="black",
+                fontweight="bold", zorder=6,
+                bbox=dict(boxstyle="round,pad=0.12", facecolor="white",
+                          edgecolor="none", alpha=0.7),
+            )
+
+
+def _render_map(env: CoverageEnv, ax, overlay: Optional[dict] = None) -> None:
     ax.clear()
     h, w = env.grid.shape
 
@@ -129,18 +243,21 @@ def _render_map(env: CoverageEnv, ax) -> None:
     ax.imshow(base, cmap=ListedColormap([FREE_COLOR, WALL_COLOR]), origin="upper",
               extent=(0, w, h, 0), vmin=0, vmax=1)
 
+    if overlay:
+        _render_overlay(env, ax, overlay)
+
     # Layer 2a: per-drone first-visitor paint. Each free cell wears the color
     # of whichever drone first reached it; later visitors don't repaint, so the
     # map stays readable as territory ownership rather than a chaotic mix.
     free_mask = env.grid == FREE
-    overlay = np.zeros((h, w, 4))
+    visitor_layer = np.zeros((h, w, 4))
     for i in range(env.n_drones):
         mask = (env.first_visitor == i) & free_mask
         if not np.any(mask):
             continue
         r_, g_, b_ = drone_color(i)
-        overlay[mask] = (r_, g_, b_, FIRST_VISITOR_ALPHA)
-    ax.imshow(overlay, origin="upper", extent=(0, w, h, 0))
+        visitor_layer[mask] = (r_, g_, b_, FIRST_VISITOR_ALPHA)
+    ax.imshow(visitor_layer, origin="upper", extent=(0, w, h, 0))
 
     # Layer 2b: shared-territory overlay. Cells touched by ≥ 2 distinct drones
     # get a translucent black on top, darkening the first-visitor color into a
@@ -234,10 +351,14 @@ def _render_map(env: CoverageEnv, ax) -> None:
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_title(
+    extra = overlay.get("title_extra") if overlay else None
+    title = (
         f"time={format_duration(env.time_seconds)}   "
         f"coverage={env.coverage_fraction():.1%}"
     )
+    if extra:
+        title += f"   {extra}"
+    ax.set_title(title)
 
 
 def _render_battery_panel(env: CoverageEnv, ax) -> None:
@@ -396,9 +517,10 @@ def render_frame(
     env: CoverageEnv,
     save_path: Optional[str] = None,
     show: bool = False,
+    overlay: Optional[dict] = None,
 ):
     fig, ax_map, ax_panel = _make_figure(env)
-    _render_map(env, ax_map)
+    _render_map(env, ax_map, overlay=overlay)
     _render_battery_panel(env, ax_panel)
     fig.tight_layout()
     if save_path:
@@ -467,7 +589,14 @@ def animate(
                 break
             actions = policy_fn(env)
             env.step(actions)
-        _render_map(env, ax_map)
+        overlay = None
+        viz = getattr(policy_fn, "viz_overlay", None)
+        if callable(viz):
+            try:
+                overlay = viz(env)
+            except Exception:
+                overlay = None
+        _render_map(env, ax_map, overlay=overlay)
         _render_battery_panel(env, ax_panel)
         return []
 

@@ -1,0 +1,53 @@
+=== Boustrophedon grid search ===
+  lane_spacing:    [1.0, 1.6, 2.5]
+  attract_gain:    [1.0, 2.5, 5.0]
+  drone_repel_gain: [2.0, 5.0, 10.0]
+  total runs:      648
+
+  [24/648] lane=1.0 attract=1.0 repel=2.0  score=+0.119  cov=64.7%
+  [48/648] lane=1.0 attract=1.0 repel=5.0  score=+0.136  cov=66.9%
+  [72/648] lane=1.0 attract=1.0 repel=10.0  score=+0.132  cov=67.0%
+  [96/648] lane=1.0 attract=2.5 repel=2.0  score=+0.139  cov=63.3%
+  [120/648] lane=1.0 attract=2.5 repel=5.0  score=+0.125  cov=62.7%
+  [144/648] lane=1.0 attract=2.5 repel=10.0  score=+0.152  cov=65.3%
+  [168/648] lane=1.0 attract=5.0 repel=2.0  score=+0.030  cov=51.7%
+  [192/648] lane=1.0 attract=5.0 repel=5.0  score=+0.041  cov=53.4%
+  [216/648] lane=1.0 attract=5.0 repel=10.0  score=+0.055  cov=53.7%
+  [240/648] lane=1.6 attract=1.0 repel=2.0  score=+0.114  cov=65.1%
+  [264/648] lane=1.6 attract=1.0 repel=5.0  score=+0.121  cov=66.0%
+  [288/648] lane=1.6 attract=1.0 repel=10.0  score=+0.118  cov=65.3%
+  [312/648] lane=1.6 attract=2.5 repel=2.0  score=+0.041  cov=53.3%
+  [336/648] lane=1.6 attract=2.5 repel=5.0  score=+0.134  cov=63.7%
+  [360/648] lane=1.6 attract=2.5 repel=10.0  score=+0.100  cov=59.7%
+  [384/648] lane=1.6 attract=5.0 repel=2.0  score=-0.005  cov=47.2%
+  [408/648] lane=1.6 attract=5.0 repel=5.0  score=+0.013  cov=49.4%
+  [432/648] lane=1.6 attract=5.0 repel=10.0  score=+0.020  cov=50.1%
+  [456/648] lane=2.5 attract=1.0 repel=2.0  score=+0.157  cov=69.5%
+  [480/648] lane=2.5 attract=1.0 repel=5.0  score=+0.137  cov=67.1%
+  [504/648] lane=2.5 attract=1.0 repel=10.0  score=+0.130  cov=65.9%
+  [528/648] lane=2.5 attract=2.5 repel=2.0  score=+0.129  cov=62.3%
+  [552/648] lane=2.5 attract=2.5 repel=5.0  score=+0.095  cov=59.3%
+  [576/648] lane=2.5 attract=2.5 repel=10.0  score=+0.124  cov=62.1%
+  [600/648] lane=2.5 attract=5.0 repel=2.0  score=+0.066  cov=55.6%
+  [624/648] lane=2.5 attract=5.0 repel=5.0  score=+0.081  cov=55.8%
+  [648/648] lane=2.5 attract=5.0 repel=10.0  score=+0.081  cov=56.6%
+
+Total wall time: 33.5 min
+Wrote: /Users/amkrtumyan/Desktop/Swarm_Drones/optimization/outputs/csv_txt/grid_search_boustrophedon.csv
+
+Boustrophedon grid search — top 10 configs
+
+rank   lane  attract  repel    score     cov    overlap   wasted     energy
+--------------------------------------------------------------------------------
+   1   2.50     1.00   2.00   +0.157   69.5%     8912m²    10379   783.0kJ
+   2   1.00     2.50  10.00   +0.152   65.3%     7011m²     9112   758.8kJ
+   3   1.00     2.50   2.00   +0.139   63.3%     6449m²     9002   749.4kJ
+   4   2.50     1.00   5.00   +0.137   67.1%     8397m²    10692   808.7kJ
+   5   1.00     1.00   5.00   +0.136   66.9%     8390m²    11210   830.6kJ
+   6   1.60     2.50   5.00   +0.134   63.7%     6891m²     9730   782.8kJ
+   7   1.00     1.00  10.00   +0.132   67.0%     8615m²    11539   848.6kJ
+   8   2.50     1.00  10.00   +0.130   65.9%     8403m²    10181   766.9kJ
+   9   2.50     2.50   2.00   +0.129   62.3%     6182m²     9069   763.0kJ
+  10   1.00     2.50   5.00   +0.125   62.7%     6547m²    10107   818.4kJ
+Wrote: /Users/amkrtumyan/Desktop/Swarm_Drones/optimization/outputs/csv_txt/grid_search_boustrophedon_top.txt
+Wrote: /Users/amkrtumyan/Desktop/Swarm_Drones/optimization/outputs/png/grid_search_boustrophedon_heatmap.png

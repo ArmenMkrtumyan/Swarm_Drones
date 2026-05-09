@@ -19,6 +19,15 @@ Four families live here:
 from .potential_fields import PotentialFieldsController, PFConfig
 from .consensus import ConsensusController, ConsensusConfig
 from .pso import PSOController, PSOConfig
+from .ga import GAController, GAConfig
+from .aco import ACOController, ACOConfig
+from .sa import SAController, SAConfig
+from .gwo import GWOController, GWOConfig
+from .boustrophedon import BoustrophedonController, BoustrophedonConfig
+from .spiral import SpiralController, SpiralConfig
+from .voronoi_partition import VoronoiPartitionController, VoronoiPartitionConfig
+from .grid_decomposition import GridDecompositionController, GridDecompositionConfig
+from .stc import STCController, STCConfig
 
 # MARL is gated on torch + stable-baselines3 being installed. Import
 # lazily so the package still works for PF / Consensus users without
@@ -40,4 +49,22 @@ __all__ = [
     "MARLController",
     "PSOController",
     "PSOConfig",
+    "GAController",
+    "GAConfig",
+    "ACOController",
+    "ACOConfig",
+    "SAController",
+    "SAConfig",
+    "GWOController",
+    "GWOConfig",
+    "BoustrophedonController",
+    "BoustrophedonConfig",
+    "SpiralController",
+    "SpiralConfig",
+    "VoronoiPartitionController",
+    "VoronoiPartitionConfig",
+    "GridDecompositionController",
+    "GridDecompositionConfig",
+    "STCController",
+    "STCConfig",
 ]

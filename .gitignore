@@ -3,3 +3,5 @@ optimization/.optim_env
 optimization/outputs/
 optimization/CLAUDE.md
 **/__pycache__/
+.claude/
+.cursor/

@@ -108,13 +108,123 @@ Full setup details, GUI dependencies for Linux/WSL, and all flags are in [`docs/
 
 ### Track 1 — Classical / geometry-based
 
-_To be added: chosen method(s), benchmark conditions, scores on the energy-aware objective, link to writeup._
+Five classical coverage algorithms implemented as **runtime controllers** matching the same `policy_fn(env) -> (n_drones, 3)` contract as Tracks 2 and 3. Each tuned by a 27-config grid search over its three most-impactful knobs — see `tools/grid_search_{boustrophedon,spiral,voronoi_partition,grid_decomposition,stc}.py`. Raw data and combined heatmaps in `outputs/csv_txt/` and `outputs/png/` respectively. The head-to-head sweep run via `tools/sweep_track1.py` writes `outputs/sweep_track1_results.csv` plus four plots in `outputs/sweep/{png,svg}/`.
+
+Algorithms:
+1. **Boustrophedon** (lawnmower) — partition map into vertical strips, drone *i* runs back-and-forth lanes inside its strip. Plan precomputed once, snap-to-free for waypoints that hit walls.
+2. **Spiral** — each drone follows an outward Archimedean spiral (`r = pitch · θ / 2π`) from its initial position. No coordination.
+3. **VoronoiPartition** — Voronoi-assign every free cell to the nearest drone start (one-time, frozen). Each drone heads to nearest uncovered cell *in its own region*. Static counterpart to Track 3's `Consensus` (which re-elects every step).
+4. **GridDecomposition** — divide map into `block_size × block_size` rectangular blocks, assign each block to nearest drone start, drones visit blocks in nearest-first order.
+5. **STC (Spanning Tree Coverage)** — Voronoi partition + BFS-ordered walk through every cell in the partition. Gabriely & Rimon, 2001.
+
+**Final benchmark — coverage % by (map × n_drones), `tools/sweep_track1.py`, mean over 3 seeds:**
+
+| Map | n | Random | Boustrophedon | Spiral | VoronoiPartition | GridDecomposition | STC |
+|---|---|---|---|---|---|---|---|
+| `open_33` | 2 | **94.8** | 32.3 | 10.5 | 90.4 | 40.1 | 92.8 |
+| `open_33` | 5 | 99.8 | 46.2 | 26.3 | 98.5 | 90.8 | **100** |
+| `open_33` | 10 | **100** | 91.3 | 89.0 | **100** | **100** | **100** |
+| `open_33` | 20 | **100** | **100** | **100** | **100** | **100** | **100** |
+| `partial_33` | 2 | **82.4** | 33.5 | 22.6 | 67.1 | 74.0 | 37.0 |
+| `partial_33` | 5 | 98.2 | 87.8 | 44.6 | **98.6** | 91.6 | 84.3 |
+| `partial_33` | 10 | **100** | **100** | 68.1 | 96.9 | 93.1 | 99.3 |
+| `partial_33` | 20 | **100** | **100** | 89.2 | **100** | **100** | **100** |
+| `closed_33` | 2 | **73.7** | 28.4 | 29.6 | 50.7 | 36.9 | 26.6 |
+| `closed_33` | 5 | **94.6** | 36.2 | 61.1 | 81.1 | 79.5 | 76.9 |
+| `closed_33` | 10 | **99.3** | 83.4 | 81.1 | 96.4 | 96.8 | 94.2 |
+| `closed_33` | 20 | 99.9 | 97.1 | 94.2 | 99.5 | **100** | **100** |
+
+**Best per algorithm** (from grid search, mean composite score across all 24 cells × 2 seeds):
+
+| Algorithm | Best config | Score | Mean cov |
+|---|---|---|---|
+| **VoronoiPartition** | attract=1.0, repel_g=2.0, repel_r=4.0 | **+0.449** | 91.2% |
+| **STC**              | attract=4.0, repel_g=10.0, repel_r=4.0 | +0.433 | 84.3% |
+| **GridDecomposition** | block=8, attract=1.0, repel_g=5.0 | +0.382 | 85.2% |
+| **Boustrophedon** | lane=2.5, attract=1.0, repel_g=2.0 | +0.157 | 69.5% |
+| **Spiral** | pitch=4.0, attract=1.0, repel_g=10.0 | +0.065 | 60.5% |
+
+**Headline findings:**
+- **Random Gaussian is surprisingly competitive** — wins outright at most n=2 cells across all maps. The 33×33 maps are small enough that running to ALL_DEPLETED (~700 s) lets random walks cover most cells eventually. Random's "weakness" (no plan) is offset by the long sim horizon; what penalizes Random in the grid-search composite score is high overlap and energy use, not coverage.
+- **VoronoiPartition is the strongest classical algorithm** — essentially the static counterpart of `ConsensusController` (Track 3). The dynamic re-election in Consensus only marginally helps over freezing the partition at *t=0*.
+- **Plan-based algorithms (Boustrophedon, Spiral) struggle on dense maps** — precomputed paths assume a workable map shape; obstacles break the plan and the drone gets stuck.
+- **GridDecomposition and STC sit in the middle** — Voronoi-flavored partition + structured traversal beats lawnmower/spiral but lags behind nearest-uncovered-in-region.
 
 ### Track 2 — Metaheuristic
 
-Five candidate population-/sample-based optimizers under evaluation. _Not yet implemented in this repo — descriptions below set the conventions for the eventual port._ When wired up, each will share the same `policy_fn(env) -> (n_drones, 3)` contract as Track 3 so they're benchmarked under identical conditions on the same `(map, seed)` pairs via `tools/benchmark.py` and `tools/sweep.py`.
+All five population-/sample-based optimizers are implemented as **runtime controllers** matching the same `policy_fn(env) -> (n_drones, 3)` contract as Track 3. Each was tuned by a 27-config grid search across the full (map × n_drones × seed) sweep — see `tools/grid_search_{pso,ga,aco,sa,gwo}.py`. Track 2's frozen artifacts (grid CSVs, heatmaps, sweep results, sweep plots) live in `outputs_metaheuristic/`; the active `outputs/` is now Track 1's workspace.
 
-Common framing: "the candidate solution" is a per-drone trajectory plan (sequence of waypoints / cell allocations), evaluated by simulating the swarm in `CoverageEnv` and scoring the resulting run against the energy-aware objective (coverage, time, energy, overlap, wasted visits — the exact components benchmarked for Track 3).
+Common framing: "the candidate solution" is a per-drone target cell (re-elected each step or evolved by the algorithm's update rule). Movement uses the same attract + drone/wall-repel + yaw-track-velocity stack as PF/Consensus.
+
+**Final benchmark — coverage % by (map × n_drones), `tools/sweep_track2.py`, mean over 3 seeds:**
+
+| Map | n | Random | PSO | GA | ACO | SA | GWO |
+|---|---|---|---|---|---|---|---|
+| `open_33` | 2 | 94.8 | 92.0 | **100** | 98.9 | **100** | **100** |
+| `open_33` | 5 | 99.8 | 98.3 | **100** | **100** | **100** | **100** |
+| `open_33` | 10 | **100** | **100** | **100** | **100** | **100** | **100** |
+| `open_33` | 20 | **100** | **100** | **100** | **100** | **100** | **100** |
+| `partial_33` | 2 | 82.4 | 89.6 | 87.0 | **99.5** | 63.0 | 88.0 |
+| `partial_33` | 5 | 98.2 | **100** | 98.4 | 99.2 | 85.4 | 73.6 |
+| `partial_33` | 10 | **100** | 99.9 | **100** | 98.1 | **100** | 99.3 |
+| `partial_33` | 20 | **100** | **100** | **100** | **100** | **100** | 99.8 |
+| `closed_33` | 2 | 73.7 | 42.0 | 66.6 | **75.8** | 35.5 | 35.9 |
+| `closed_33` | 5 | 94.6 | 83.5 | **94.9** | 88.5 | 60.8 | 75.5 |
+| `closed_33` | 10 | 99.3 | 95.7 | 99.2 | 96.2 | 96.2 | 47.6 |
+| `closed_33` | 20 | 99.9 | 99.9 | **100** | **100** | **100** | 83.4 |
+
+**Best per algorithm** (from grid search, mean composite score across all 24 cells × 2 seeds):
+
+| Algorithm | Best config | Score | Mean cov |
+|---|---|---|---|
+| **ACO** | α=1.0, β=4.0, ρ=0.15 | **+0.470** | 96.0% |
+| **PSO** | w=0.5, c1=3.0, c2=0.0 | +0.444 | 92.9% |
+| **GA**  | elite=0.4, p_cx=0.10, p_mut=0.30 | +0.424 | 95.6% |
+| **SA**  | T₀=0.5, α=0.999, σ=3.0 | +0.359 | 87.3% |
+| **GWO** | a₀=5.0, a_f=0.5, decay=3000 | +0.251 | 84.4% |
+
+**Cross-track findings:**
+- **ACO and GA beat MARL at n=2** on open/partial maps — `ACO partial_33 n=2 = 99.5 %` vs `MARL = 90.4 %`. The simpler greedy-target approach with re-election each step actually outperforms a learned policy when each drone has lots of territory.
+- **All Track 2 algorithms have a strong "information sharing hurts" pattern** — PSO's social pull, GA's crossover, GWO's leader-following all benefit from being turned *down* (or off entirely, like PSO `c2=0`). Drones doing their own thing wins on coverage problems.
+- **SA and GWO are the weakest** — Metropolis "sometimes accept worse" and GWO's leader-flock dynamic produce wandering / herding that hurts spread.
+
+#### Per-map breakdown (final coverage %, mean over 3 seeds)
+
+##### `open_33` — 88.2 % open, 24,025 m² free
+
+![open_33](docs/images/map_open_33.png)
+
+| Policy | n = 2 | n = 5 | n = 10 | n = 20 |
+|---|---|---|---|---|
+| **PSO** | 96.0 % | 97.2 % | 100.0 % | 100.0 % |
+| **GA** | **100.0 %** | **100.0 %** | 100.0 % | 100.0 % |
+| **ACO** | 98.9 % | **100.0 %** | 100.0 % | 100.0 % |
+| **SA** | **100.0 %** | **100.0 %** | 100.0 % | 100.0 % |
+| **GWO** | **100.0 %** | **100.0 %** | 100.0 % | 100.0 % |
+
+##### `partial_33` — 73.0 % open, 19,875 m² free
+
+![partial_33](docs/images/map_partial_33.png)
+
+| Policy | n = 2 | n = 5 | n = 10 | n = 20 |
+|---|---|---|---|---|
+| **PSO** | 94.4 % | 99.2 % | 100.0 % | 100.0 % |
+| **GA** | 87.0 % | 98.4 % | 100.0 % | 100.0 % |
+| **ACO** | **99.5 %** | 99.2 % | 98.1 % | 100.0 % |
+| **SA** | 63.0 % | 85.4 % | 100.0 % | 100.0 % |
+| **GWO** | 88.0 % | 73.6 % | 99.3 % | 99.8 % |
+
+##### `closed_33` — 53.1 % open, 14,450 m² free (densest map)
+
+![closed_33](docs/images/map_closed_33.png)
+
+| Policy | n = 2 | n = 5 | n = 10 | n = 20 |
+|---|---|---|---|---|
+| **PSO** | 51.5 % | 75.8 % | 90.2 % | 99.4 % |
+| **GA** | 66.6 % | **94.9 %** | **99.2 %** | **100.0 %** |
+| **ACO** | **75.8 %** | 88.5 % | 96.2 % | **100.0 %** |
+| **SA** | 35.5 % | 60.8 % | 96.2 % | **100.0 %** |
+| **GWO** | 35.9 % | 75.5 % | 47.6 % | 83.4 % |
 
 #### Particle Swarm Optimization (PSO)
 
@@ -265,3 +375,34 @@ Key takeaways:
 | **Potential Fields** | 47.5 % | **97.3 %** | **99.8 %** | 100.0 % |
 | **Consensus**     | 47.5 % | 92.6 % | 99.0 % | 100.0 % |
 | **MARL (PPO)**    | **73.6 %** | 87.5 % | 97.3 % | 100.0 % |
+
+---
+
+## Cross-track comparison
+
+All four Track 3 policies and all five Track 2 metaheuristics, evaluated on the same (map × n_drones) grid with their tuned defaults. **Bold** marks the per-cell winner. (Track 3 numbers from `outputs_control_based/csv_txt/sweep_results.csv`; Track 2 numbers from `outputs_metaheuristic/sweep_track2_results.csv`. Track 1 numbers in the Track 1 section above, from `outputs/sweep_track1_results.csv`.)
+
+| Map | n | Random | PF | Consensus | MARL | ‖ | PSO | GA | ACO | SA | GWO |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `open_33` | 2 | 94.8 | 11.8 | 11.8 | 93.4 | ‖ | 92.0 | **100** | 98.9 | **100** | **100** |
+| `open_33` | 5 | 99.8 | 57.4 | 58.5 | 99.0 | ‖ | 98.3 | **100** | **100** | **100** | **100** |
+| `open_33` | 10 | **100** | **100** | **100** | 99.3 | ‖ | **100** | **100** | **100** | **100** | **100** |
+| `open_33` | 20 | **100** | **100** | **100** | **100** | ‖ | **100** | **100** | **100** | **100** | **100** |
+| `partial_33` | 2 | 82.4 | 78.9 | 86.2 | 90.4 | ‖ | 89.6 | 87.0 | **99.5** | 63.0 | 88.0 |
+| `partial_33` | 5 | 98.2 | **99.9** | 98.8 | 97.1 | ‖ | **100** | 98.4 | 99.2 | 85.4 | 73.6 |
+| `partial_33` | 10 | **100** | 98.0 | **100** | 98.2 | ‖ | 99.9 | **100** | 98.1 | **100** | 99.3 |
+| `partial_33` | 20 | **100** | **100** | **100** | **100** | ‖ | **100** | **100** | **100** | **100** | 99.8 |
+| `closed_33` | 2 | 73.7 | 47.5 | 47.5 | 73.6 | ‖ | 42.0 | 66.6 | **75.8** | 35.5 | 35.9 |
+| `closed_33` | 5 | 94.6 | **97.3** | 92.6 | 87.5 | ‖ | 83.5 | 94.9 | 88.5 | 60.8 | 75.5 |
+| `closed_33` | 10 | 99.3 | **99.8** | 99.0 | 97.3 | ‖ | 95.7 | 99.2 | 96.2 | 96.2 | 47.6 |
+| `closed_33` | 20 | 99.9 | **100** | **100** | **100** | ‖ | 99.9 | **100** | **100** | **100** | 83.4 |
+
+**Headline cross-track findings:**
+
+- **Track 2 metaheuristics dominate at sparse swarms (n = 2)** — `ACO partial_33 = 99.5 %` and `GA open_33 = 100 %` beat the best Track 3 policy at the same cell. The reason: with each drone re-electing its target every step, no learning is needed to handle the "lots of fresh territory" regime.
+- **Track 3's PF/Consensus dominate at medium-to-large swarms on dense maps** — `closed_33 n=10` PF wins at 99.8 %, ahead of GA's 99.2 %. Force-field repulsion with PF/Consensus's tuned `dense()` preset handles crowding well.
+- **MARL is the most robust on `closed_33` at low n** but is consistently beaten by greedy metaheuristics at low n on `open_33`/`partial_33`.
+- **GWO and SA are the weakest** — leader-flock and Metropolis-wandering both produce coverage holes that don't close out. GWO collapses to 47.6 % on `closed_33 n=10`; SA drops to 35.5 % on `closed_33 n=2`.
+- **Random Gaussian is a stronger baseline than expected** — at `closed_33 n=2` it beats all Track 2 metaheuristics (73.7 %) and ties MARL; at `open_33 n=2` it beats PF/Consensus by ~80 pp.
+
+**Practical takeaway:** if I had to pick a single algorithm that's competitive across every operating point, **GA** has the most cells at 100 % and never falls below 66.6 %. **ACO** is the most balanced — strong everywhere and never collapses. PF/Consensus need their swarm-density preset chosen correctly; MARL is heaviest to deploy. Pick by deployment constraints.

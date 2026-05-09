@@ -43,10 +43,23 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from constants import DATA_DIR, MARL_DIR, PLOTS_DIR
-from controllers import ConsensusController, PotentialFieldsController
+from constants import MARL_DIR, OUTPUTS_DIR
+from controllers import (
+    ConsensusController,
+    PotentialFieldsController,
+    PSOController,
+    GAController,
+    ACOController,
+    SAController,
+    GWOController,
+)
 from controllers.consensus import ConsensusConfig
 from controllers.potential_fields import PFConfig
+from controllers.pso import PSOConfig
+from controllers.ga import GAConfig
+from controllers.aco import ACOConfig
+from controllers.sa import SAConfig
+from controllers.gwo import GWOConfig
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import load_map
 
@@ -55,10 +68,15 @@ POLICY_COLORS = {
     "Random":    "#888888",
     "PF":        "#1f77b4",
     "Consensus": "#2ca02c",
+    "PSO":       "#ff7f0e",
+    "GA":        "#8c564b",
+    "ACO":       "#e377c2",
+    "SA":        "#7f7f7f",
+    "GWO":       "#bcbd22",
     "MARL":      "#d62728",
-    "MARL+S":    "#9467bd",   # shaped-reward variant
+    "MARL+S":    "#9467bd",
 }
-POLICY_ORDER = ["Random", "PF", "Consensus", "MARL", "MARL+S"]
+POLICY_ORDER = ["Random", "PF", "Consensus", "PSO", "GA", "ACO", "SA", "GWO", "MARL", "MARL+S"]
 
 
 @dataclass
@@ -152,6 +170,11 @@ def run_one(
         reason=reason,
         coverage_curve=coverage_curve,
     )
+
+
+def make_stateful_factory(controller_cls, cfg, seed):
+    """Create a fresh stateful controller instance (GA/ACO/SA/GWO)."""
+    return controller_cls(cfg=cfg, hover_drone_idx=None, seed=seed)
 
 
 def make_marl(n_drones: int, marl_base: str) -> Optional[Callable]:
@@ -383,15 +406,20 @@ def main():
 
     seeds = list(range(args.seeds_per_config))
 
-    # Build base policies once. PF and Consensus are stateless and reusable.
-    # Use the `dense()` preset (random-search winner over all 7 knobs at n=5
-    # partial_33). It dominates the default at most operating points; the
-    # rare regression at n=2 is a known trade-off (wider repel range hurts
-    # when drones are sparse).
+    # Stateless controllers — reusable across runs.
     pf = PotentialFieldsController(cfg=PFConfig.dense(), hover_drone_idx=None)
     consensus = ConsensusController(cfg=ConsensusConfig.dense(), hover_drone_idx=None)
+    pso = PSOController(cfg=PSOConfig(), hover_drone_idx=None)
 
-    n_policies = 3
+    # Stateful controllers (GA/ACO/SA/GWO) need fresh instances per run.
+    STATEFUL_POLICIES = {
+        "GA":  (GAController, GAConfig()),
+        "ACO": (ACOController, ACOConfig()),
+        "SA":  (SAController, SAConfig()),
+        "GWO": (GWOController, GWOConfig()),
+    }
+
+    n_policies = 3 + 1 + len(STATEFUL_POLICIES)  # Random + PF + Consensus + PSO + stateful
     if not args.skip_marl:
         n_policies += 1
         if args.marl_shaped_base is not None:
@@ -405,6 +433,8 @@ def main():
     print(f"  maps: {[m[0] for m in maps]}")
     print(f"  drone counts: {args.drones_list}")
     print(f"  seeds per config: {args.seeds_per_config}")
+    print(f"  policies: Random, PF, Consensus, PSO, GA, ACO, SA, GWO"
+          + (", MARL" if not args.skip_marl else ""))
     print()
 
     results: list[RunResult] = []
@@ -419,14 +449,26 @@ def main():
                 if args.marl_shaped_base is not None:
                     marl_shaped = make_marl_shaped(n_drones, args.marl_shaped_base)
 
-            policies = [("Random", None), ("PF", pf), ("Consensus", consensus)]
-            if marl is not None:
-                policies.append(("MARL", marl))
-            if marl_shaped is not None:
-                policies.append(("MARL+S", marl_shaped))
+            for seed in seeds:
+                # Stateless policies
+                policies_this_run: list[tuple[str, Callable]] = [
+                    ("Random", None),
+                    ("PF", pf),
+                    ("Consensus", consensus),
+                    ("PSO", pso),
+                ]
+                # Fresh stateful controllers per (n_drones, seed)
+                for name in STATEFUL_POLICIES:
+                    cls, cfg = STATEFUL_POLICIES[name]
+                    policies_this_run.append(
+                        (name, make_stateful_factory(cls, cfg, seed))
+                    )
+                if marl is not None:
+                    policies_this_run.append(("MARL", marl))
+                if marl_shaped is not None:
+                    policies_this_run.append(("MARL+S", marl_shaped))
 
-            for policy_name, policy_fn in policies:
-                for seed in seeds:
+                for policy_name, policy_fn in policies_this_run:
                     t_run0 = time.time()
                     r = run_one(
                         policy_name, policy_fn,
@@ -444,10 +486,9 @@ def main():
                           f"({time.time() - t_run0:.1f}s)")
     print(f"\nTotal wall time: {time.time() - t0:.1f} s\n")
 
-    # CSV
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = DATA_DIR / "sweep_results.csv"
+    # CSV (stays at outputs/ root)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = OUTPUTS_DIR / "sweep_results.csv"
     with csv_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0].headline().keys()))
         w.writeheader()
@@ -455,24 +496,21 @@ def main():
             w.writerow(r.headline())
     print(f"Wrote: {csv_path}")
 
-    # Plots
-    plot_coverage_vs_drones(
-        results, args.drones_list,
-        PLOTS_DIR / "sweep_coverage_vs_drones.png",
-    )
-    plot_time_to_80_vs_drones(
-        results, args.drones_list,
-        PLOTS_DIR / "sweep_time_to_80_vs_drones.png",
-    )
-    plot_efficiency_vs_drones(
-        results, args.drones_list,
-        PLOTS_DIR / "sweep_efficiency_vs_drones.png",
-    )
-    plot_curves_grid(
-        results, args.drones_list,
-        PLOTS_DIR / "sweep_curves_grid.png",
-    )
-    print(f"Wrote 4 sweep plots to {PLOTS_DIR}/")
+    # Plots: PNG → outputs/sweep/png/, SVG → outputs/sweep/svg/
+    sweep_png = OUTPUTS_DIR / "sweep" / "png"
+    sweep_svg = OUTPUTS_DIR / "sweep" / "svg"
+    sweep_png.mkdir(parents=True, exist_ok=True)
+    sweep_svg.mkdir(parents=True, exist_ok=True)
+    plot_specs = [
+        ("sweep_coverage_vs_drones",  plot_coverage_vs_drones),
+        ("sweep_time_to_80_vs_drones", plot_time_to_80_vs_drones),
+        ("sweep_efficiency_vs_drones", plot_efficiency_vs_drones),
+        ("sweep_curves_grid",          plot_curves_grid),
+    ]
+    for name, fn in plot_specs:
+        fn(results, args.drones_list, sweep_png / f"{name}.png")
+        fn(results, args.drones_list, sweep_svg / f"{name}.svg")
+    print(f"Wrote 4 sweep plots: PNG → {sweep_png}/, SVG → {sweep_svg}/")
 
     # Summary
     print("\n=== Mean final coverage by (map × policy × n_drones) ===")

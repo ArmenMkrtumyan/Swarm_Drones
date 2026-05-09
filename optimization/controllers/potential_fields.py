@@ -137,6 +137,25 @@ class PotentialFieldsController:
         self.cfg = cfg or PFConfig()
         self.hover_drone_idx = hover_drone_idx
 
+    def viz_overlay(self, env: CoverageEnv) -> dict:
+        # PF picks "nearest uncovered cell" per drone as its attract target.
+        free_mask = env.grid == FREE
+        uncov_mask = free_mask & ~env.covered
+        n = env.n_drones
+        targets = [None] * n
+        if uncov_mask.any():
+            uy, ux = np.where(uncov_mask)
+            uncov_pos = np.column_stack([ux + 0.5, uy + 0.5])
+            for i, drone in enumerate(env.drones):
+                if i == self.hover_drone_idx:
+                    continue
+                d2 = ((uncov_pos - drone.pos) ** 2).sum(axis=1)
+                targets[i] = uncov_pos[int(d2.argmin())].copy()
+        return {
+            "targets": targets,
+            "title_extra": "Potential Fields",
+        }
+
     def __call__(self, env: CoverageEnv) -> np.ndarray:
         n = env.n_drones
         actions = np.zeros((n, 3), dtype=np.float64)

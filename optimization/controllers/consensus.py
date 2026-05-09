@@ -135,6 +135,60 @@ class ConsensusController:
         self.cfg = cfg or ConsensusConfig()
         self.hover_drone_idx = hover_drone_idx
 
+    def viz_overlay(self, env: CoverageEnv) -> dict:
+        # Compute the (group-local Voronoi) partition over uncovered cells +
+        # the comm graph edges, fresh from current state.
+        h, w = env.grid.shape
+        free_mask = env.grid == FREE
+        uncov_mask = free_mask & ~env.covered
+        n = env.n_drones
+        positions = np.array([d.pos for d in env.drones])
+
+        # Partition over ALL free cells (so the regions show even before any
+        # cell is covered — purely educational, no group-local restriction).
+        ys = np.arange(h)[:, None] + 0.5
+        xs = np.arange(w)[None, :] + 0.5
+        d2 = ((positions[:, 0:1, None] - xs[None]) ** 2
+              + (positions[:, 1:2, None] - ys[None]) ** 2)
+        regions = d2.argmin(axis=0).astype(np.int32)
+        regions[~free_mask] = -1
+
+        # Communication-graph edges from env.neighbors().
+        edges = []
+        for i in range(n):
+            for j in env.neighbors(i):
+                if i < j:
+                    edges.append((i, j))
+
+        # Per-drone target = chosen attractor from current uncov cells.
+        targets = [None] * n
+        if uncov_mask.any():
+            uy, ux = np.where(uncov_mask)
+            uncov_pos = np.column_stack([ux + 0.5, uy + 0.5])
+            for i, drone in enumerate(env.drones):
+                if i == self.hover_drone_idx:
+                    continue
+                group = np.concatenate([[i], env.neighbors(i)])
+                group_pos = positions[group]
+                diffs = uncov_pos[:, None, :] - group_pos[None, :, :]
+                dists_sq = (diffs ** 2).sum(axis=2)
+                owner_in_group = dists_sq.argmin(axis=1)
+                mine = owner_in_group == 0
+                if mine.any():
+                    owned = uncov_pos[mine]
+                    if self.cfg.target_strategy == "centroid":
+                        targets[i] = owned.mean(axis=0)
+                    else:
+                        d_owned = ((owned - drone.pos) ** 2).sum(axis=1)
+                        targets[i] = owned[int(d_owned.argmin())].copy()
+
+        return {
+            "regions": regions,
+            "edges": edges,
+            "targets": targets,
+            "title_extra": "Consensus",
+        }
+
     def __call__(self, env: CoverageEnv) -> np.ndarray:
         n = env.n_drones
         actions = np.zeros((n, 3), dtype=np.float64)
