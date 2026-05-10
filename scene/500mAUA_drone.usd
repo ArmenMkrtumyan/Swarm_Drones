@@ -5,15 +5,15 @@
             double animation_fps = 60
             int bad_frame_size_threshold = 0
             int batch_count = 1
-            string camera_name = "/World/hawks_work_f450_jetsonnano_steereocam/right_camera_frame/right_camera_mount/right_camera"
+            string camera_name = "/World/hawks_work_f450_jetsonnano_steereocam/left_camera_frame/left_camera_mount/left_camera"
             bool capture_application = 0
             int capture_every_nth_frames = 20
             bool capture_every_nth_frames_checked = 0
             int capture_frame_end = 1000000
             int capture_frame_start = 0
-            string capture_name = "test_1"
+            string capture_name = "hover_1_CALM"
             string capture_range = "Custom Range - Seconds"
-            double capture_time_end = 200
+            double capture_time_end = 40
             double capture_time_start = 0
             int early_quit_time_limit = 0
             string exr_compression_method = "zips"
@@ -74,8 +74,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (6.062598823426355, -14.979249237240118, 10.952317271600416)
-                double3 target = (1.2894679558101796, -1.1637946767882905, 2.582273111863424)
+                double3 position = (5, 5, 5)
+                double3 target = (4.824102765383657, 5.00952921294673, 4.846583378549328)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -85,7 +85,7 @@
                 double3 position = (0, 0, 5)
                 double radius = 5
             }
-            string boundCamera = "/OmniverseKit_Persp"
+            string boundCamera = "/World/hawks_work_f450_jetsonnano_steereocam/left_camera_frame/left_camera_mount/left_camera"
         }
         dictionary omni_layer = {
             string authoring_layer = "./500mAUA_drone.usd"
@@ -98,7 +98,9 @@
             int "/persistent/simulation/minFrameRate" = 60
         }
         dictionary renderSettings = {
-            int "rtx:externalFrameCounter" = 279
+            int "rtx:externalFrameCounter" = 1049
+            int "rtx:pathtracing:totalSpp" = 1
+            bool "rtx:post:backgroundZeroAlpha:outputAlphaInComposite" = 1
             bool "rtx:reflections:enabled" = 0
         }
     }
@@ -118,7 +120,7 @@ def Xform "World"
     {
         double3 xformOp:rotateZYX = (0, 0, 0)
         double3 xformOp:scale = (1, 1, 1)
-        double3 xformOp:translate = (0, 0, 125)
+        double3 xformOp:translate = (0, 0, 85)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZYX", "xformOp:scale"]
     }
 
@@ -133,7 +135,7 @@ def Xform "World"
         token visibility = "inherited"
         quatd xformOp:orient = (0.7071067811865475, -8.991538858660337e-17, 2.7841545814679687e-17, 0.7071067811865476)
         double3 xformOp:scale = (1.0000000000000004, 0.9999999999999999, 0.9999999999999996)
-        double3 xformOp:translate = (0, 0, 1.202)
+        double3 xformOp:translate = (0, 0, 1.15)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
         over "steereocam_housing_link"
@@ -160,11 +162,11 @@ def Xform "World"
                     float focalLength = 4.3
                     float focusDistance = 400
                     float horizontalAperture = 4.382
-                    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.04343134250768455)
+                    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.0003024683150381431)
                     float verticalAperture = 3.957
-                    quatd xformOp:orient = (0.9899181448460244, -0.13056802721838195, 0.05442901581146526, 0.007179067536989471)
+                    quatd xformOp:orient = (0.994135911620467, -0.10805688556871396, -0.004075083054441396, -0.0009446723412396741)
                     double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
-                    double3 xformOp:translate = (-0.015184630875889102, -0.0017323649067140234, -0.008933874958776344)
+                    double3 xformOp:translate = (0.13737644108178104, 0.44571562644305374, 1.3523790672436746)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                 }
             }
@@ -193,9 +195,9 @@ def Xform "World"
                     bool omni:kit:cameraLock = 0
                     custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.00044299290321721463)
                     float verticalAperture = 3.957
-                    quatd xformOp:orient = (0.9814334456288002, -0.17838768594848595, -0.06583873684481437, 0.025129385862064244)
+                    quatd xformOp:orient = (0.9775284568577435, -0.20615216453565646, 0.01667243878805999, 0.04076065352077635)
                     double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
-                    double3 xformOp:translate = (0.04750476789417631, 0.602945382657697, 1.3715227758732396)
+                    double3 xformOp:translate = (0.04750476789417633, 0.6029453826576969, 1.3715227758732398)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                 }
             }
@@ -565,19 +567,19 @@ def "Render" (
                 no_delete = true
             )
             {
-                rel camera = </World/hawks_work_f450_jetsonnano_steereocam/right_camera_frame/right_camera_mount/right_camera>
+                rel camera = </World/hawks_work_f450_jetsonnano_steereocam/left_camera_frame/left_camera_mount/left_camera>
                 token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
                 token omni:rtx:background:source:type = "domeLight"
                 bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
                 bool omni:rtx:material:db:syncLoads = 1
-                bool omni:rtx:post:compositing:outputAlpha
+                bool omni:rtx:post:compositing:outputAlpha = 1
                 token omni:rtx:post:dlss:execMode = "performance"
                 bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
                 bool omni:rtx:post:registeredCompositing:invertToneMap = 1
                 bool omni:rtx:pt:lightcache:cached:dontResolveConflicts = 1
                 int omni:rtx:pt:maxSamplesPerLaunch = 2073600
                 int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
-                int omni:rtx:pt:samplesPerPixel
+                int omni:rtx:pt:samplesPerPixel = 1
                 token omni:rtx:rendermode
                 color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
                 bool omni:rtx:rt:demoire = 0
@@ -590,7 +592,7 @@ def "Render" (
                 uint omni:rtx:viewTile:limit = 4294967295
                 rel orderedVars = </Render/Vars/LdrColor>
                 custom bool overrideClipRange = 0
-                uniform int2 resolution = (1280, 720)
+                uniform int2 resolution = (1920, 1080)
             }
 
             def RenderProduct "omni_kit_widget_viewport_ViewportTexture_1" (
@@ -654,7 +656,7 @@ def "Render" (
 
 over "OmniverseKit_Persp"
 {
-    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -16.843610130469266)
+    custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.2335964528463565)
     float verticalAperture = 20.955
     quatd xformOp:orient = (0.6607538461685181, 0.3007526397705078, 0.284900426864624, 0.6259264945983887)
     double3 xformOp:scale = (1, 1, 1)

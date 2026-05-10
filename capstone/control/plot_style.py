@@ -24,7 +24,8 @@ COLORS = {
     "east":            "#8c564b",   # brown
     "roll":            "#d62728",   # red
     "pitch":           "#9467bd",   # purple
-    "gyro_mag":        "#ff7f0e",   # orange
+    "gyro_mag":        "#ff7f0e",   # orange (post-noise: what controller saw)
+    "gyro_mag_truth":  "#1a1a1a",   # near-black (truth: pre-noise reference)
     "wind_mag":        "#17becf",   # teal
     "hover_window":    "#cce5ff",   # pale blue shading
     "mass_drop_event": "#e31a1c",   # bright red marker line

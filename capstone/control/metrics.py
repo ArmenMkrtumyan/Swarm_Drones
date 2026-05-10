@@ -55,11 +55,11 @@ CALM_GATES: dict[str, tuple[str, float]] = {
     # passes reliably. ANY profile that meets these is at "calm-quality hover"
     # — that's the bar RL has to clear under disturbance.
     "alt_std_m":       ("<", 0.08),    # calm 3-run max: 0.073
-    "pos_rms_north_m": ("<", 0.05),    # calm 3-run max: 0.040
-    "pos_rms_east_m":  ("<", 0.05),    # calm 3-run max: 0.032
+    "pos_rms_north_m": ("<", 0.06),    # v2 calm 10-run max: 0.0525 (post-USD-fix re-derive 2026-05-07)
+    "pos_rms_east_m":  ("<", 0.06),    # v2 calm 10-run max: 0.0534 (post-USD-fix re-derive 2026-05-07)
     "roll_rms_rad":    ("<", 0.003),   # calm 3-run max: 0.0022
-    "pitch_rms_rad":   ("<", 0.003),   # calm 3-run max: 0.0024
-    "gyro_rms":        ("<", 0.008),   # calm 3-run max: 0.0070
+    "pitch_rms_rad":   ("<", 0.004),   # v2 calm 10-run max: 0.00317 (post-USD-fix re-derive 2026-05-07)
+    "gyro_rms":        ("<", 0.009),   # v2 calm 10-run max: 0.00817 (post-USD-fix re-derive 2026-05-07)
     "crashed":         ("==", 0),
 }
 

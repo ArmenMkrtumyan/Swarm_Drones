@@ -36,7 +36,7 @@ from capstone.missions.dsl import (
 DEFAULT_HOME_LAT = 40.192
 DEFAULT_HOME_LON = 44.50446
 DEFAULT_MASTER = "udpin:localhost:14551"
-DEFAULT_MONITOR_TIMEOUT_S = 300.0
+DEFAULT_MONITOR_TIMEOUT_S = 900.0  # 15 min wall ~= 6 min sim at Isaac 40% realtime
 
 
 # -----------------------------------------------------------------------------
@@ -161,6 +161,52 @@ def wait_armed(master, mavutil, timeout: float = 5.0) -> bool:
         if is_armed(master, mavutil):
             return True
     return False
+
+
+def wait_disarmed(master, mavutil, timeout: float = 30.0) -> bool:
+    """Wait until the vehicle reports disarmed via heartbeat. Used between
+    consecutive runs in a batch — the previous run's mission may still be
+    executing or descending when the next run kicks off."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if not is_armed(master, mavutil):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def cleanup_for_next_run(master, mavutil, logger, timeout: float = 60.0) -> None:
+    """Force the vehicle into a state where MISSION_CLEAR_ALL will be accepted.
+
+    ArduCopter rejects mission clear while AUTO is actively executing or while
+    the vehicle is airborne+armed. Switch to GUIDED first (stops AUTO mode
+    state machine), then if still armed wait for natural disarm (the previous
+    RTL/LAND should bring it down). If after `timeout` it's still armed,
+    force-disarm so the next run can proceed.
+    """
+    if is_armed(master, mavutil):
+        print("[cleanup] vehicle still armed -- switching to GUIDED to stop AUTO")
+        try:
+            set_mode(master, mavutil, "GUIDED")
+        except RuntimeError as e:
+            print(f"[cleanup] set_mode GUIDED failed: {e!r}")
+        if logger is not None:
+            drain_messages(master, logger, duration=1.0)
+        if not wait_disarmed(master, mavutil, timeout=timeout):
+            print("[cleanup] still armed after wait -- force-disarming")
+            master.mav.command_long_send(
+                master.target_system, master.target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0,
+                0, 21196, 0, 0, 0, 0, 0,
+            )
+            time.sleep(1.0)
+    else:
+        # Disarmed but possibly still in AUTO from a prior crash/abort; flip
+        # to GUIDED so the upload's clear-all isn't rejected on mode grounds.
+        try:
+            set_mode(master, mavutil, "GUIDED")
+        except RuntimeError:
+            pass
 
 
 def set_mode(master, mavutil, mode_name: str) -> None:
@@ -453,6 +499,13 @@ def run_mission(
         request_streams(master, mavutil)
         drain_messages(master, logger, duration=5.0)
 
+        # Clean state before uploading: if the previous run is still flying
+        # or armed, MISSION_CLEAR_ALL gets rejected. Stop AUTO and wait for
+        # disarm (force-disarm if it overruns). 60 s wall covers Isaac's
+        # 40 % realtime ratio with margin for a long descent.
+        cleanup_for_next_run(master, mavutil, logger, timeout=60.0)
+        drain_messages(master, logger, duration=2.0)
+
         print(f"Mission to upload ({len(items)} items):")
         for it in items:
             print(f"  seq={it['seq']:2d} cmd={it['command']:3d} "
@@ -478,12 +531,13 @@ def run_mission(
         if not wait_armed(master, mavutil, timeout=5.0):
             raise RuntimeError("Vehicle did not arm. Check pre-arm checks / params.")
 
-        # Climb timeout scales with takeoff altitude. WP_SPD_UP is 5 m/s in
-        # our SITL params, plus ~6 s of motor spin-up before the drone
-        # starts climbing. Formula: 2x expected_climb_s + 15 s buffer
-        # (generous so a slow run doesn't false-fail), with a 30 s floor.
-        expected_climb_s = mission.takeoff.altitude_m / 5.0
-        climb_timeout = max(30.0, expected_climb_s * 2.0 + 15.0)
+        # Climb timeout: Isaac+SITL runs at ~40 % of wall-clock realtime, plus
+        # ~10-15 s of pre-climb motor spin-up before the drone visibly lifts.
+        # The original 30 s floor false-failed on a 30 m takeoff (drone reached
+        # only 5 m at t=29 s wall while still accelerating). Set to 30 min
+        # wall, which is "effectively unlimited" for any sane mission while
+        # still bailing if SITL/EKF hangs entirely.
+        climb_timeout = 1800.0
         if not takeoff_guided_and_wait(
                 master, mavutil, alt=mission.takeoff.altitude_m, logger=logger,
                 climb_timeout=climb_timeout):

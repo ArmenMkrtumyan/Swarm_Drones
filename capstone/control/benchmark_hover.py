@@ -79,6 +79,7 @@ def detect_profile(log: FlightLog) -> str:
 # -----------------------------------------------------------------------------
 ACTION_ALT_THRESHOLD_M = 0.2
 ACTION_PAD_S = 1.0
+HOVER_ZOOM_PAD_S = 3.0  # zoom = scoring window ± this many seconds
 
 
 def find_action_window(states: list[dict]) -> tuple[float | None, float | None]:
@@ -97,6 +98,24 @@ def find_action_window(states: list[dict]) -> tuple[float | None, float | None]:
         max(t_log_start, t_first - ACTION_PAD_S),
         min(t_log_end, t_last + ACTION_PAD_S),
     )
+
+
+def find_zoom_window(
+    log: "FlightLog", metrics: "metrics.HoverMetrics"
+) -> tuple[float | None, float | None]:
+    """Hover-centric zoom: scoring window padded by HOVER_ZOOM_PAD_S on each
+    side, so the eye sees the lead-in to hover, the scored 10 s, and the
+    lead-out together. Falls back to the action window (airborne ± 1 s) if
+    metrics couldn't compute a window (e.g. drone never reached hover alt)."""
+    if (metrics.window_t0 is not None and metrics.window_t1 is not None
+            and log.states):
+        t_log_start = float(log.states[0]["t"])
+        t_log_end = float(log.states[-1]["t"])
+        return (
+            max(t_log_start, metrics.window_t0 - HOVER_ZOOM_PAD_S),
+            min(t_log_end, metrics.window_t1 + HOVER_ZOOM_PAD_S),
+        )
+    return find_action_window(log.states)
 
 
 # -----------------------------------------------------------------------------
@@ -154,16 +173,18 @@ def extract_series(log: FlightLog) -> dict[str, list[float]]:
 # -----------------------------------------------------------------------------
 # Plot generation (matplotlib).
 # -----------------------------------------------------------------------------
-def describe_profile(profile_name: str, total_mass_kg: float | None) -> str:
-    """One-line human-readable summary of the disturbance config that produced
-    this log. Reads parameters straight from the disturbance module so the
-    description stays in lockstep with the harness."""
+def describe_profile_parts(
+    profile_name: str, total_mass_kg: float | None
+) -> list[str]:
+    """List of human-readable parts (wind, mass, IMU) for the disturbance
+    config that produced this log. Used by plot_log to build a multi-row
+    subtitle. `describe_profile` joins the same parts into a single string."""
     from capstone.control.disturbance import make as make_profile
 
     try:
         p = make_profile(profile_name, seed=0)
     except KeyError:
-        return f"profile={profile_name} (unknown)"
+        return [f"profile={profile_name} (unknown)"]
 
     parts = []
 
@@ -206,7 +227,14 @@ def describe_profile(profile_name: str, total_mass_kg: float | None) -> str:
     else:
         parts.append("IMU clean")
 
-    return "    ".join(parts)
+    return parts
+
+
+def describe_profile(profile_name: str, total_mass_kg: float | None) -> str:
+    """One-line human-readable summary of the disturbance config that produced
+    this log. Joins `describe_profile_parts` with the legacy 4-space separator
+    for backward-compatible tests and any non-plot callers."""
+    return "    ".join(describe_profile_parts(profile_name, total_mass_kg))
 
 
 def format_gate_annotation(
@@ -414,12 +442,26 @@ def plot_log(
             linewidth=plot_style.LINE_WIDTHS["gyro"],
             label="post-noise (sent to SITL)" if s.get("have_gyro_truth") else None)
     if s.get("have_gyro_truth"):
+        # Truth gets a contrasting color (near-black) so it stays visible
+        # under the noisy orange post-noise trace; dotted style + same panel
+        # so the relationship reads as "noise-free reference for the orange".
         ax.plot(s["t"], s["gyro_mag_truth"],
-                color=plot_style.COLORS["gyro_mag"],
-                linewidth=plot_style.LINE_WIDTHS["gyro"],
+                color=plot_style.COLORS["gyro_mag_truth"],
+                linewidth=plot_style.LINE_WIDTHS["gyro"] + 0.2,
                 linestyle=":",
                 label="truth (pre-noise)")
         ax.legend(loc="upper left", fontsize=8)
+        # Clip y-axis to the meaningful range. IMU-noise profiles have rare
+        # post-noise spikes (sometimes >1 rad/s) that visually compress the
+        # interesting data into the bottom 5% of the panel and make the
+        # truth line indistinguishable from post-noise. Cap at the 99th
+        # percentile of post-noise + 25% headroom so spikes are clipped but
+        # the typical traces fill the panel.
+        gyro_vals = [g for g in s["gyro_mag"] if g is not None]
+        if gyro_vals:
+            sorted_g = sorted(gyro_vals)
+            p99 = sorted_g[int(0.99 * (len(sorted_g) - 1))]
+            ax.set_ylim(0, max(p99 * 1.25, 0.05))
     shade_window(ax)
     mark_drop(ax)
     ax.set_ylabel(plot_style.LABELS["gyro_y"])
@@ -446,21 +488,36 @@ def plot_log(
     # already says which view this is, and the x-axis itself shows the range.
     fig.suptitle(
         f"{log.path.name}   profile={metrics.profile}   verdict={verdict}",
-        fontsize=11, y=0.985,
+        fontsize=12, fontweight="bold", y=0.985,
     )
 
-    # Subtitle: actual disturbance values + shading legend (replaces the
-    # legacy |wind| panel).
+    # Subtitle: actual disturbance values + shading legend, split across two
+    # rows so worst_case (wind + 300 g payload + IMU noise) doesn't overflow.
+    # Row 1 packs the short bits (wind + IMU) on one line; row 2 is the mass
+    # description, which can get long (e.g. mass_drop's "1.365 kg + 300 g
+    # payload (loaded 1.665 kg), drops after 5 s hover"). Shading legend goes
+    # on its own line in italic so it doesn't compete with disturbance text.
+    # Title→subtitle gap is intentionally larger than inter-subtitle gap so
+    # the title reads as visually separate from the disturbance description.
     cal = log.find_event("motor_model_calibrated")
     base_mass = float(cal["total_mass_kg"]) if cal else None
-    config_str = describe_profile(metrics.profile, base_mass)
+    config_parts = describe_profile_parts(metrics.profile, base_mass)
+    if len(config_parts) >= 3:
+        row1 = config_parts[0] + "    |    " + config_parts[2]
+        row2 = config_parts[1]
+    else:
+        row1 = "    |    ".join(config_parts)
+        row2 = ""
+    fig.text(0.5, 0.945, row1, ha="center", fontsize=9, color="#444")
+    if row2:
+        fig.text(0.5, 0.925, row2, ha="center", fontsize=9, color="#444")
     fig.text(
-        0.5, 0.955,
-        config_str + "    |    shaded region = hover window",
-        ha="center", fontsize=9, color="#444",
+        0.5, 0.905,
+        "shaded region = hover window",
+        ha="center", fontsize=8, color="#666", style="italic",
     )
 
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout(rect=[0, 0, 1, 0.89])
     plot_style.savefig_dual(fig, out_path)
     plt.close(fig)
 
@@ -735,7 +792,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if not args.no_plots:
             plot_log(log, m, plots_full_dir / f"{log_path.stem}_series.png")
-            zoom_range = find_action_window(log.states)
+            zoom_range = find_zoom_window(log, m)
             if zoom_range[0] is not None and zoom_range[1] is not None:
                 plot_log(
                     log, m,
