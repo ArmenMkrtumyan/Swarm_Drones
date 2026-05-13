@@ -62,27 +62,37 @@ class PSOConfig:
     # Inertia: weight on current velocity in the PSO update used as
     # acceleration. With env's natural momentum already present, low
     # values keep the drone responsive without overshoot.
-    inertia: float = 0.5
-
-    # Cognitive coefficient — pull toward this drone's nearest uncovered
+    inertia: float = 0.0773   # Cognitive coefficient — pull toward this drone's nearest uncovered  (BO; was 0.5)
     # cell (re-elected each step). Drives local greedy coverage.
-    cognitive: float = 3.0
-
-    # Social coefficient — pull toward the swarm's nearest uncovered cell
+    cognitive: float = 3.2217   # Social coefficient — pull toward the swarm's nearest uncovered cell  (BO; was 3.0)
     # (relative to the swarm centroid). Defaults below come from a
     # two-stage grid search (`tools/grid_search_pso.py`, broad then
     # corner-pushed): the textbook PSO recipe with non-zero social pull
     # *hurts* coverage because it makes drones flock, so the empirically
     # best setting is `social = 0.0` — no flocking term at all. The
     # cognitive pull is what does all the work on this dynamic objective.
-    social: float = 0.0
-
-    # Wall repulsion (1/r²) — same form and defaults as PF.
-    wall_repel_gain: float = 2.0
+    social: float = 0.0137   # Velocity damping — see PFConfig.attract_damp_gain. PSO's update  (BO; was 0.0)
+    # already contains `inertia * v` which drives orbiting around the
+    # personal-best target (drone passes p_best at high speed, cognitive
+    # pull weakens to zero near the target, inertia keeps it going). The
+    # damping term `-attract_damp_gain * v` brakes the inertia component;
+    # mathematically the effective inertia becomes (inertia - damp).
+    #
+    # Default 0.5 matches `inertia = 0.5` exactly → effective inertia = 0
+    # → no momentum term, PSO degenerates to pure cognitive+social pull.
+    # Found by sweep on partial_33: damp=0.0 (orbit) → 317s; damp=0.1-0.3
+    # (still orbiting, worse) → 596-634s; damp=0.5 → 219s (best).
+    # Cancelling the inertia term entirely deviates from textbook PSO but
+    # works far better on this dynamic coverage objective — the
+    # re-elected-each-step p_best already provides plenty of "exploration"
+    # without needing velocity persistence.
+    attract_damp_gain: float = 0.6908   # Wall repulsion (1/r²) — same form and defaults as PF.  (BO; was 0.5)
+    wall_repel_gain: float = 1.6511   # BO-tuned (was 2.0)
     wall_repel_range: float = 1.5
 
     # Yaw P-controller (same as PF).
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9   # critical damping K_d = 2·√K_p; see PFConfig
     velocity_align_threshold: float = 0.05
 
 
@@ -173,6 +183,7 @@ class PSOController:
                 cfg.inertia * v
                 + cfg.cognitive * r1 * (pbest_pos[i] - pos)
                 + cfg.social * r2 * (gbest_pos - pos)
+                - cfg.attract_damp_gain * v
             )
 
             # Wall repulsion (same form as PF).
@@ -200,7 +211,7 @@ class PSOController:
                     2 * math.pi
                 ) - math.pi
                 actions[i, 2] = float(
-                    np.clip(cfg.yaw_align_gain * err,
+                    np.clip(cfg.yaw_align_gain * err - cfg.yaw_damp_gain * drone.yaw_rate,
                             -max_yaw_accel, max_yaw_accel)
                 )
 

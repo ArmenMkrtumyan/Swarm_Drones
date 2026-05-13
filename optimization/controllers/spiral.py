@@ -46,7 +46,7 @@ class SpiralConfig:
     # `tools/grid_search_spiral.py` — wide pitch (4.0) wins because
     # uncoordinated spirals overlap heavily; spreading to larger radii
     # per revolution covers more new ground per drone-second.
-    pitch: float = 4.0
+    pitch: float = 2.5446   # BO-tuned (was 4.0)
     angle_step_deg: float = 18.0   # waypoint sampling resolution
     max_radius: float = 25.0       # cells; cap so spirals don't run forever
 
@@ -56,13 +56,21 @@ class SpiralConfig:
     # Movement gains — low attract + high drone repel won the grid (drones
     # need strong personal-space enforcement to avoid stomping each other's
     # spirals).
-    attract_gain: float = 1.0
-    drone_repel_gain: float = 10.0
-    drone_repel_range: float = 2.5
-    wall_repel_gain: float = 2.0
+    attract_gain: float = 2.43   # BO-tuned (was 1.0)
+    attract_damp_gain: float = 0.0956   # see PFConfig.attract_damp_gain  (BO; was 0.2)
+    drone_repel_gain: float = 7.9536   # BO-tuned (was 10.0)
+    drone_repel_range: float = 3.1575   # BO-tuned (was 2.5)
+    wall_repel_gain: float = 1.4287   # BO-tuned (was 2.0)
     wall_repel_range: float = 1.5
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9   # critical damping K_d = 2·√K_p; see PFConfig
     velocity_align_threshold: float = 0.05
+
+    # Stuck-detector — see BoustrophedonConfig for the rationale + the
+    # reason `stuck_min_progress = 0.8` (wall-slide false-negatives at 0.3).
+    stuck_timeout_s: float = 5.0
+    stuck_min_progress: float = 0.8   # cells (closer to target)
+    stuck_skip_n: int = 3             # waypoints to advance per stuck event
 
 
 class SpiralController:
@@ -77,10 +85,18 @@ class SpiralController:
         self.hover_drone_idx = hover_drone_idx
         self._plans: Optional[list[list[np.ndarray]]] = None
         self._idx: Optional[list[int]] = None
+        self._stuck_best_dist: Optional[list[float]] = None
+        self._stuck_anchor_t: Optional[list[float]] = None
+        # Actually-pursued target each step (plan waypoint or fallback);
+        # see boustrophedon.py for rationale.
+        self._last_targets: Optional[list[Optional[np.ndarray]]] = None
 
     def reset(self) -> None:
         self._plans = None
         self._idx = None
+        self._stuck_best_dist = None
+        self._stuck_anchor_t = None
+        self._last_targets = None
 
     def viz_overlay(self, env: CoverageEnv) -> dict:
         n = env.n_drones
@@ -89,12 +105,12 @@ class SpiralController:
         if self._plans is not None:
             for i in range(min(n, len(self._plans))):
                 wps = self._plans[i]
-                if not wps:
-                    continue
-                paths[i] = np.array([np.asarray(w, dtype=float) for w in wps])
-                k = self._idx[i] if self._idx else 0
-                if 0 <= k < len(wps):
-                    targets[i] = np.asarray(wps[k], dtype=float)
+                if wps:
+                    paths[i] = np.array([np.asarray(w, dtype=float) for w in wps])
+        if self._last_targets is not None:
+            for i in range(min(n, len(self._last_targets))):
+                if self._last_targets[i] is not None:
+                    targets[i] = np.asarray(self._last_targets[i], dtype=float)
         return {
             "paths": paths,
             "targets": targets,
@@ -161,6 +177,9 @@ class SpiralController:
         if self._plans is None or len(self._plans) != n:
             self._plans = self._compute_plan(env)
             self._idx = [0] * n
+            self._stuck_best_dist = [float('inf')] * n
+            self._stuck_anchor_t = [env.time_seconds] * n
+            self._last_targets = [None] * n
 
         free_mask = env.grid == FREE
         wy, wx = np.where(env.grid == WALL)
@@ -178,10 +197,39 @@ class SpiralController:
                 continue
 
             wps = self._plans[i]
+            # Stuck-detection — see boustrophedon.py for rationale.
+            if self._idx[i] < len(wps):
+                target = wps[self._idx[i]]
+                dist = float(np.linalg.norm(drone.pos - target))
+                if dist < self._stuck_best_dist[i] - cfg.stuck_min_progress:
+                    self._stuck_best_dist[i] = dist
+                    self._stuck_anchor_t[i] = env.time_seconds
+                    stuck = False
+                else:
+                    stuck = (env.time_seconds - self._stuck_anchor_t[i]
+                             > cfg.stuck_timeout_s)
+            else:
+                stuck = False
+
+            h, w = env.grid.shape
             while self._idx[i] < len(wps):
                 target = wps[self._idx[i]]
-                if float(np.linalg.norm(target - drone.pos)) <= cfg.arrival_radius:
+                reached = (
+                    float(np.linalg.norm(target - drone.pos)) <= cfg.arrival_radius
+                )
+                tx, ty = int(target[0]), int(target[1])
+                already_covered = (
+                    0 <= tx < w and 0 <= ty < h and bool(env.covered[ty, tx])
+                )
+                if stuck:
+                    self._idx[i] = min(self._idx[i] + cfg.stuck_skip_n, len(wps))
+                    self._stuck_best_dist[i] = float('inf')
+                    self._stuck_anchor_t[i] = env.time_seconds
+                    stuck = False
+                elif reached or already_covered:
                     self._idx[i] += 1
+                    self._stuck_best_dist[i] = float('inf')
+                    self._stuck_anchor_t[i] = env.time_seconds
                 else:
                     break
 
@@ -194,15 +242,17 @@ class SpiralController:
                     d2 = ((uncov_pos - drone.pos) ** 2).sum(axis=1)
                     target = uncov_pos[int(d2.argmin())]
                 else:
+                    self._last_targets[i] = None
                     continue
             else:
                 target = wps[self._idx[i]]
+            self._last_targets[i] = np.asarray(target, dtype=float).copy()
 
             # ---- attract ----
             offset = target - drone.pos
             dist = float(np.linalg.norm(offset))
             if dist > 1e-9:
-                a = cfg.attract_gain * (offset / dist)
+                a = cfg.attract_gain * (offset / dist) - cfg.attract_damp_gain * drone.vel
             else:
                 a = np.zeros(2)
 
@@ -238,7 +288,7 @@ class SpiralController:
                     2 * math.pi
                 ) - math.pi
                 actions[i, 2] = float(
-                    np.clip(cfg.yaw_align_gain * err,
+                    np.clip(cfg.yaw_align_gain * err - cfg.yaw_damp_gain * drone.yaw_rate,
                             -max_yaw_accel, max_yaw_accel)
                 )
 

@@ -1,6 +1,10 @@
 numpy==2.0.2
 matplotlib==3.9.4
 
+# Hyperparameter optimization (tools/bo_search.py — TPE-sampler Bayesian
+# optimization across all controllers' configs).
+optuna>=4.0
+
 # Track-3 MARL controller (controllers/marl.py + tools/train_marl.py).
 # These are heavy installs — `pip install -r requirements.txt` will pull
 # them. If you only need PF / Consensus, you can comment them out.

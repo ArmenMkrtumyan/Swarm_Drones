@@ -56,17 +56,17 @@ class GWOConfig:
     # drones onto α/β/δ targets, hurting spread on a coverage objective. Best
     # config: high `a0` keeps |A|>1 longer (drones can step *past* leaders),
     # plus a long `decay_steps` keeps that exploration alive.
-    a_initial: float = 5.0
-    a_final: float = 0.5
-    decay_steps: int = 3000
-
-    # Movement gains (only wall repel + yaw — GWO formula already encodes
+    a_initial: float = 2.8793   # BO-tuned (was 5.0)
+    a_final: float = 0.6775   # BO-tuned (was 0.5)
+    decay_steps: int = 206   # Movement gains (only wall repel + yaw — GWO formula already encodes  (BO; was 3000)
     # the leader-pulling. Drone repel kept off here to let the GWO update
     # be the primary force.)
-    wall_repel_gain: float = 2.0
+    wall_repel_gain: float = 2.7022   # BO-tuned (was 2.0)
     wall_repel_range: float = 1.5
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9   # critical damping K_d = 2·√K_p; see PFConfig
     velocity_align_threshold: float = 0.05
+    attract_damp_gain: float = 0.0506   # see PFConfig.attract_damp_gain  (BO; was 0.2)
 
 
 class GWOController:
@@ -166,7 +166,7 @@ class GWOController:
             X_new = sum(X_pulls) / 3.0
 
             # Use the proposed displacement as acceleration command.
-            accel = X_new - pos
+            accel = X_new - pos - cfg.attract_damp_gain * drone.vel
 
             # Wall repel
             if has_walls:
@@ -194,7 +194,7 @@ class GWOController:
                     2 * math.pi
                 ) - math.pi
                 actions[i, 2] = float(
-                    np.clip(cfg.yaw_align_gain * err,
+                    np.clip(cfg.yaw_align_gain * err - cfg.yaw_damp_gain * drone.yaw_rate,
                             -max_yaw_accel, max_yaw_accel)
                 )
 

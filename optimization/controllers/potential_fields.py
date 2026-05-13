@@ -60,23 +60,45 @@ class PFConfig:
     """
     # Attractive pull toward the nearest uncovered cell. 1.0 means the unit
     # vector toward target is added to F_total at full strength.
-    attract_gain: float = 1.5
-
-    # Repulsion from other drones — kept slightly above attract_gain so two
+    attract_gain: float = 2.8939   # Velocity-damping term on the translation command, applied as  (BO; was 1.5)
+    # `a = attract_gain · unit_to_target − attract_damp_gain · velocity`.
+    # Without it, attract has constant magnitude regardless of distance, so
+    # a drone at full speed gets pulled at the same force whether it's 10
+    # cells from the target or 0.1 cells — it overshoots, momentum carries
+    # it past, attract flips direction, and the drone orbits the target
+    # instead of decelerating into it (classic PF overshoot). Same role as
+    # `yaw_damp_gain` for translation: turn the P-controller into a PD.
+    #
+    # Default 0.2 found empirically by sweeping against partial_33 with 5
+    # drones, seed=1. K_d = 1.0 (the textbook "critical" value) is too
+    # aggressive — at max_speed = 1.8 cells/s it produces 1.8 cells/s² of
+    # braking, which fights legitimate forward motion when the drone is
+    # still far from its target. The terminal velocity v_eq = K_a / K_d
+    # then becomes K_a (e.g., 1.0 cells/s for boustrophedon's K_a = 1.0),
+    # well below the 1.8 cells/s max — drones cruise slower than they
+    # need to and coverage drops. K_d = 0.2 brakes orbiting motion near
+    # the target (the orbit is *narrow*, so even light damping bleeds the
+    # tangential component) without capping cruise speed.
+    attract_damp_gain: float = 0.1214   # Repulsion from other drones — kept slightly above attract_gain so two  (BO; was 0.1)
     # drones can't sit on the same target. Falls off as 1/r².
-    drone_repel_gain: float = 5.0
-    drone_repel_range: float = 2.5      # cells; outside this, no repulsion
+    drone_repel_gain: float = 2.0103   # BO-tuned (was 5.0)
+    drone_repel_range: float = 2.6192   # cells; outside this, no repulsion  (BO; was 2.5)
 
     # Wall repulsion — softer than drone repulsion (walls are static and the
     # env's hard collision handles the absolute boundary). Smooths corner
     # transitions.
-    wall_repel_gain: float = 2.0
-    wall_repel_range: float = 1.5       # cells
+    wall_repel_gain: float = 2.924   # BO-tuned (was 2.0)
+    wall_repel_range: float = 1.6719   # cells  (BO; was 1.5)
 
-    # Yaw P-controller: alpha_yaw = yaw_align_gain · heading_error.
-    # Headings within `velocity_align_threshold` cells/s of zero velocity
-    # don't yaw (heading_error is undefined for stationary drones).
+    # Yaw PD-controller: alpha_yaw = yaw_align_gain · err − yaw_damp_gain · yaw_rate.
+    # heading is a 2nd-order integrator (alpha → yaw_rate → heading), so pure-P
+    # overshoots and oscillates around the velocity direction. Adding a damping
+    # term on yaw_rate makes it PD. Critical damping for K_p = 6 is K_d = 2·√K_p
+    # ≈ 4.9 — no overshoot, fastest settle. Headings within
+    # `velocity_align_threshold` cells/s of zero velocity don't yaw (err is
+    # undefined for a stationary drone).
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9
     velocity_align_threshold: float = 0.05    # cells/s
 
     @classmethod
@@ -196,7 +218,7 @@ class PotentialFieldsController:
             nearest = int(dist_sq.argmin())
             target_dist = math.sqrt(max(dist_sq[nearest], 1e-12))
             attract_dir = d_uncov[nearest] / max(target_dist, 1e-9)
-            f_total += self.cfg.attract_gain * attract_dir
+            f_total += self.cfg.attract_gain * attract_dir - self.cfg.attract_damp_gain * drone.vel
 
             # ---- Drone repulsion: push away from close neighbors ----
             for j in range(n):
@@ -249,7 +271,7 @@ class PotentialFieldsController:
                 err = (target_heading - drone.heading + math.pi) % (
                     2 * math.pi
                 ) - math.pi
-                alpha = self.cfg.yaw_align_gain * err
+                alpha = self.cfg.yaw_align_gain * err - self.cfg.yaw_damp_gain * drone.yaw_rate
                 actions[i, 2] = float(
                     np.clip(alpha, -max_yaw_accel, max_yaw_accel)
                 )

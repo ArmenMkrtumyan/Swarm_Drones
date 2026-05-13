@@ -47,20 +47,35 @@ class SAConfig:
     # and slow cooling. SA was the weakest Track 2 algorithm overall — the
     # Metropolis "sometimes accept worse" rule produces wandering on a
     # dynamic coverage objective.
-    T_initial: float = 0.5          # starting temperature
-    cooling_rate: float = 0.999     # geometric: T_{k+1} = T_k · cooling_rate
+    T_initial: float = 3.3145   # starting temperature  (BO; was 0.5)
+    cooling_rate: float = 0.9616   # geometric: T_{k+1} = T_k · cooling_rate  (BO; was 0.999)
     T_min: float = 1e-3             # floor (effectively-greedy below this)
-    perturb_radius: float = 3.0     # cells; Gaussian σ on proposed offsets
+    perturb_radius: float = 1.2299   # cells; Gaussian σ on proposed offsets  (BO; was 3.0)
     fitness_radius: float = 4.0     # cells; uncov-cell count radius for fitness
 
     # Movement gains (same defaults as PF)
-    attract_gain: float = 1.5
-    drone_repel_gain: float = 5.0
+    attract_gain: float = 3.3618   # BO-tuned (was 1.5)
+    attract_damp_gain: float = 0.3477   # see PFConfig.attract_damp_gain  (BO; was 0.2)
+    drone_repel_gain: float = 4.4124   # BO-tuned (was 5.0)
     drone_repel_range: float = 2.5
     wall_repel_gain: float = 2.0
     wall_repel_range: float = 1.5
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9   # critical damping K_d = 2·√K_p; see PFConfig
     velocity_align_threshold: float = 0.05
+
+    # Stuck-detector + per-drone blacklist. See STCConfig.stuck_*.
+    stuck_timeout_s: float = 5.0
+    stuck_min_progress: float = 0.3
+    blacklist_decay_distance: float = 5.0
+
+    # Target-commitment radius — see ACOConfig.arrival_radius. Without
+    # commitment, the Metropolis perturbation runs every step and the
+    # target random-walks under the drone's nose; with it, the perturb
+    # only fires once the drone has arrived (or its target was covered
+    # / blacklisted), preserving SA's annealing character but pacing it
+    # with the physics.
+    arrival_radius: float = 0.6
 
 
 class SAController:
@@ -77,10 +92,18 @@ class SAController:
         self._rng = np.random.default_rng(seed)
         self._targets: Optional[np.ndarray] = None     # (n, 2)
         self._T: Optional[float] = None                # scalar
+        self._stuck_best_dist: Optional[list[float]] = None
+        self._stuck_anchor_t: Optional[list[float]] = None
+        self._blacklist: Optional[list[set[tuple[int, int]]]] = None
+        self._blacklist_anchor_pos: Optional[list[np.ndarray]] = None
 
     def reset(self) -> None:
         self._targets = None
         self._T = None
+        self._stuck_best_dist = None
+        self._stuck_anchor_t = None
+        self._blacklist = None
+        self._blacklist_anchor_pos = None
 
     def viz_overlay(self, env: CoverageEnv) -> dict:
         return {
@@ -119,25 +142,70 @@ class SAController:
                 len(uncov_pos), size=min(n, len(uncov_pos)), replace=False
             )
             self._targets = uncov_pos[idxs].copy()
+            self._stuck_best_dist = [float('inf')] * n
+            self._stuck_anchor_t = [env.time_seconds] * n
+            self._blacklist = [set() for _ in range(n)]
+            self._blacklist_anchor_pos = [d.pos.copy() for d in env.drones]
         if self._T is None:
             self._T = self.cfg.T_initial
 
-        # Stale-target cleanup: covered targets → nearest uncov.
+        # Stuck detection + stale-target cleanup.
         for i in range(n):
             tx, ty = int(self._targets[i][0]), int(self._targets[i][1])
             stale = not (0 <= ty < env.h and 0 <= tx < env.w
                          and uncov_mask[ty, tx])
+
+            # Distance-to-target progress check.
+            dist_prev = float(np.linalg.norm(env.drones[i].pos - self._targets[i]))
+            if dist_prev < self._stuck_best_dist[i] - self.cfg.stuck_min_progress:
+                self._stuck_best_dist[i] = dist_prev
+                self._stuck_anchor_t[i] = env.time_seconds
+            elif (env.time_seconds - self._stuck_anchor_t[i]
+                  > self.cfg.stuck_timeout_s):
+                self._blacklist[i].add((ty, tx))
+                self._blacklist_anchor_pos[i] = env.drones[i].pos.copy()
+                stale = True
+                self._stuck_best_dist[i] = float('inf')
+                self._stuck_anchor_t[i] = env.time_seconds
+
+            # Position-based blacklist decay.
+            moved = float(np.linalg.norm(
+                env.drones[i].pos - self._blacklist_anchor_pos[i]
+            ))
+            if moved > self.cfg.blacklist_decay_distance:
+                self._blacklist[i].clear()
+                self._blacklist_anchor_pos[i] = env.drones[i].pos.copy()
+
             if stale:
-                d2 = ((uncov_pos - positions[i]) ** 2).sum(axis=1)
-                self._targets[i] = uncov_pos[int(d2.argmin())].copy()
+                pool = uncov_pos
+                if self._blacklist[i]:
+                    keep = np.ones(len(uncov_pos), dtype=bool)
+                    for k in range(len(uncov_pos)):
+                        if (int(uncov_pos[k, 1]), int(uncov_pos[k, 0])) in self._blacklist[i]:
+                            keep[k] = False
+                    if keep.any():
+                        pool = uncov_pos[keep]
+                    else:
+                        self._blacklist[i].clear()
+                d2 = ((pool - positions[i]) ** 2).sum(axis=1)
+                new_target = pool[int(d2.argmin())].copy()
+                if not np.allclose(new_target, self._targets[i], atol=0.1):
+                    self._stuck_best_dist[i] = float('inf')
+                    self._stuck_anchor_t[i] = env.time_seconds
+                self._targets[i] = new_target
 
         # Cool down.
         self._T = max(self.cfg.T_min, self._T * self.cfg.cooling_rate)
 
-        # Per-drone Metropolis update.
+        # Per-drone Metropolis update. Gated on target arrival so the
+        # perturbation doesn't reassign targets while drones are in flight.
         cfg = self.cfg
         for i, drone in enumerate(env.drones):
             if i == self.hover_drone_idx:
+                continue
+            # Target-commitment gate.
+            dist_to_target = float(np.linalg.norm(drone.pos - self._targets[i]))
+            if dist_to_target > cfg.arrival_radius:
                 continue
 
             current_fitness = self._fitness(self._targets[i], uncov_pos)
@@ -165,7 +233,7 @@ class SAController:
             offset_to_target = target - drone.pos
             dist = float(np.linalg.norm(offset_to_target))
             if dist > 1e-9:
-                a = cfg.attract_gain * (offset_to_target / dist)
+                a = cfg.attract_gain * (offset_to_target / dist) - cfg.attract_damp_gain * drone.vel
             else:
                 a = np.zeros(2)
 
@@ -203,7 +271,7 @@ class SAController:
                     2 * math.pi
                 ) - math.pi
                 actions[i, 2] = float(
-                    np.clip(cfg.yaw_align_gain * err,
+                    np.clip(cfg.yaw_align_gain * err - cfg.yaw_damp_gain * drone.yaw_rate,
                             -max_yaw_accel, max_yaw_accel)
                 )
 

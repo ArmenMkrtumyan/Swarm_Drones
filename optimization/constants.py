@@ -24,7 +24,12 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-MAPS_DIR = OUTPUTS_DIR / "maps"
+MAPS_DIR = PROJECT_ROOT / "maps"       # project-root `maps/` — single source of truth
+                                       # for the saved test maps (open_33, partial_33,
+                                       # closed_33, plus any user-drawn maps from
+                                       # `tools/editor.py`). The sweep scripts and
+                                       # the editor both read/write here directly;
+                                       # no `outputs/maps/` indirection needed.
 PLOTS_DIR = OUTPUTS_DIR / "png"        # PNG figures: random search progress, sweep plots, etc.
 DATA_DIR = OUTPUTS_DIR / "csv_txt"     # raw data tables (.csv) and ranked-top summaries (.txt)
 MARL_DIR = OUTPUTS_DIR / "marl"        # PPO checkpoint .zip files

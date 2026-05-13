@@ -56,15 +56,16 @@ class ConsensusConfig:
     below. Sparse swarms gain less from tuning here than for PF (the
     Voronoi attractor already enforces territory partition).
     """
-    attract_gain: float = 1.5
+    attract_gain: float = 4.7894   # BO-tuned (was 1.5)
+    attract_damp_gain: float = 0.6809   # see PFConfig.attract_damp_gain  (BO; was 0.2)
 
-    drone_repel_gain: float = 5.0
-    drone_repel_range: float = 2.5
-
-    wall_repel_gain: float = 2.0
+    drone_repel_gain: float = 1.7859   # BO-tuned (was 5.0)
+    drone_repel_range: float = 1.3672   # BO-tuned (was 2.5)
+    wall_repel_gain: float = 3.0575   # BO-tuned (was 2.0)
     wall_repel_range: float = 1.5
 
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9   # critical damping K_d = 2·√K_p; see PFConfig
     velocity_align_threshold: float = 0.05
 
     # When a drone owns zero uncovered cells in its Voronoi region (common
@@ -247,7 +248,7 @@ class ConsensusController:
             target_dist = float(np.linalg.norm(offset_to_target))
             if target_dist > 1e-9:
                 attract_dir = offset_to_target / target_dist
-                f_total = cfg.attract_gain * attract_dir
+                f_total = cfg.attract_gain * attract_dir - cfg.attract_damp_gain * drone.vel
             else:
                 f_total = np.zeros(2)
 
@@ -294,7 +295,7 @@ class ConsensusController:
                 err = (target_heading - drone.heading + math.pi) % (
                     2 * math.pi
                 ) - math.pi
-                alpha = cfg.yaw_align_gain * err
+                alpha = cfg.yaw_align_gain * err - cfg.yaw_damp_gain * drone.yaw_rate
                 actions[i, 2] = float(
                     np.clip(alpha, -max_yaw_accel, max_yaw_accel)
                 )

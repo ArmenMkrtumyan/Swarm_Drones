@@ -79,12 +79,16 @@ class DroneConfig:
                            (camera's stereo depth ceiling; visual range is
                            further but unreliable for depth-localized coverage)
         sensor_hfov_rad  = 54° (from the lens datasheet at docs/camera_specs/)
-        max_yaw_rate     = 1.5 rad/s ≈ 86°/s — conservative coverage scan rate
-                           (full 360° in ~4.2 s); PX4/ArduPilot firmware
-                           defaults sit at ~200°/s
-        max_yaw_accel    = 4.0 rad/s² — chosen for ~0.4 s yaw-settle time
-                           (1.5 / 4.0 ≈ 0.38 s); engineering judgment, not a
-                           physics anchor
+        max_yaw_rate     = 3.0 rad/s ≈ 172°/s — mid-range of the F450's
+                           realistic 90–200°/s envelope (PX4/ArduPilot
+                           defaults sit at ~200°/s). The earlier 86°/s was
+                           too conservative: at 9 m/s translation the
+                           velocity direction sweeps faster than 86°/s
+                           during course corrections, so the camera lagged
+                           visibly behind motion. Full 360° in ~2.1 s.
+        max_yaw_accel    = 6.0 rad/s² — chosen for ~0.5 s yaw-settle time
+                           (3.0 / 6.0 = 0.50 s); preserves the prior
+                           settle-time character at the higher rate cap.
     """
     # Forward-wedge sensor (STEEReoCAM Nano forward-facing, see docs/camera_specs/)
     sensor_range: float = 1.6                          # cells (= 8 m at 5 m/cell — depth ceiling)
@@ -108,9 +112,41 @@ class DroneConfig:
                                                        # for our 1.3 kg build — stability margin)
 
     # Yaw (camera scanning) — independent of translation in this 2D model.
-    # Real quadcopters can yaw at 90-200°/s; we use 86°/s as a conservative default.
-    max_yaw_rate: float = 1.5                          # rad / s
-    max_yaw_accel: float = 4.0                         # rad / second²
+    # Real F450 + PX4/ArduPilot can yaw at 90–200°/s; we sit mid-range at
+    # 172°/s so the camera can keep up with `max_speed = 1.8 cells/s`
+    # translation. With pure-P yaw the cap was 86°/s and the camera visibly
+    # lagged velocity during course corrections; PD damping (see
+    # *Config.yaw_damp_gain in controllers/) killed overshoot, raising the
+    # rate cap closes the remaining gap. max_yaw_accel scales together to
+    # keep settle time at ~0.5 s (3.0 / 6.0 = 0.50 s).
+    max_yaw_rate: float = 3.0                          # rad / s  (≈ 172°/s)
+    max_yaw_accel: float = 6.0                         # rad / second²
+
+    # "Yaw before translate" gate (env-enforced, see step() for details).
+    # When the commanded acceleration direction differs from the drone's
+    # direction of motion by more than `yaw_gate_engage_rad` radians, the
+    # env brakes translation and yaws toward the commanded direction.
+    # Hysteresis (engage at the engage threshold, release at the release
+    # threshold) prevents flickering. Mirrors a forward-camera mission:
+    # stop → yaw → fly.
+    #
+    # **Default OFF.** With the existing controllers' acceleration-command
+    # outputs (attract + drone_repel + wall_repel summed each step), the
+    # commanded direction is noisy on the order of seconds, and any env-
+    # side gate fires far too often — drones spend most time in brake/yaw
+    # cycles instead of covering ground (see commits 2026-05-12 trace:
+    # boustrophedon on 11×11 dropped from 100 % coverage in 109 s to
+    # 50–67 % at battery depletion regardless of threshold tuning).
+    # Resolving this cleanly needs either smoothing the cmd direction
+    # with extra per-drone EWMA state or modifying the controllers to
+    # expose stable "intent" signals (waypoint targets, not instantaneous
+    # accel). Until that lands, the PD damping in controllers/*.py plus
+    # the bumped max_yaw_rate (3.0 rad/s) handle the original visual
+    # camera-lag issue adequately. Set this True to opt in and experiment.
+    yaw_before_translate: bool = False
+    yaw_gate_engage_rad: float = 1.0                   # rad (≈ 57°)
+    yaw_gate_release_rad: float = 0.3                  # rad (≈ 17°)
+    yaw_gate_cooldown_s: float = 1.0                   # seconds; see step()
 
     drone_radius: float = 0.05    # cells (≈ 0.25 m: midpoint approximation of F450 footprint
                                   # — bare-frame ~0.16 m, prop-tip extent ~0.28 m); collision only
@@ -252,6 +288,8 @@ class Drone:
     heading: float = 0.0                         # yaw, radians; 0 = +x direction
     yaw_rate: float = 0.0                        # rad/s, signed
     battery_j: float = 0.0                       # set by env on reset
+    yaw_gate_engaged: bool = False               # see DroneConfig.yaw_before_translate
+    yaw_gate_cooldown_steps: int = 0             # locks gate off briefly post-release
 
 
 class CoverageEnv:
@@ -379,6 +417,84 @@ class CoverageEnv:
 
         step_seconds = self.sim_cfg.step_seconds
         cutoff_j = self.battery_cfg.cutoff_energy_j
+
+        # "Yaw before translate" gate. The gate engages when the commanded
+        # acceleration direction differs from the drone's actual direction
+        # of motion (velocity direction while moving, heading while slow)
+        # by more than `yaw_gate_engage_rad`. While engaged, translation is
+        # braked against velocity and yaw is overridden with time-optimal
+        # bang-bang to drive heading to the commanded direction. The gate
+        # only releases once the heading error itself drops below
+        # `yaw_gate_release_rad` (hysteresis). The drone stops, yaws, then
+        # resumes flying — matching a forward-camera mission profile.
+        #
+        # Engagement uses velocity-direction error (not heading error) when
+        # the drone is moving, because during smooth flight the controller's
+        # commanded accel direction oscillates with repel/attract dynamics
+        # but the drone's velocity is already aligned with where it's going.
+        # Comparing cmd vs heading would fire the gate on every minor wobble.
+        if self.drone_cfg.yaw_before_translate:
+            engage = self.drone_cfg.yaw_gate_engage_rad
+            release = self.drone_cfg.yaw_gate_release_rad
+            max_ya = self.drone_cfg.max_yaw_accel
+            moving_threshold = 0.3  # cells/s ≈ 1.5 m/s
+            for i, drone in enumerate(self.drones):
+                a = accel_lin[i]
+                a_mag = float(np.linalg.norm(a))
+                if a_mag < 1e-3:
+                    drone.yaw_gate_engaged = False
+                    continue  # no translation intent — leave action untouched
+                cmd_h = math.atan2(a[1], a[0])
+                heading_err = (cmd_h - drone.heading + math.pi) % (2 * math.pi) - math.pi
+                v = drone.vel
+                v_n = float(np.linalg.norm(v))
+                # Engagement metric: velocity-direction err while moving,
+                # else heading err. Release metric: always heading err.
+                if v_n > moving_threshold:
+                    v_dir = math.atan2(v[1], v[0])
+                    engage_err = (cmd_h - v_dir + math.pi) % (2 * math.pi) - math.pi
+                else:
+                    engage_err = heading_err
+                # Hysteresis + post-release cooldown. The cooldown prevents
+                # the gate from immediately re-engaging on transient cmd
+                # direction wobble while the drone is still ramping up
+                # velocity after release; without it the gate firing rate
+                # in dense scenarios (e.g. 3 drones on an 11×11 map, where
+                # drone_repel + wall_repel dominate the cmd vector) thrashes
+                # and the drone never makes progress.
+                if drone.yaw_gate_engaged:
+                    if abs(heading_err) <= release:
+                        drone.yaw_gate_engaged = False
+                        drone.yaw_gate_cooldown_steps = int(round(
+                            self.drone_cfg.yaw_gate_cooldown_s / step_seconds
+                        ))
+                        continue
+                else:
+                    if drone.yaw_gate_cooldown_steps > 0:
+                        drone.yaw_gate_cooldown_steps -= 1
+                        continue
+                    if abs(engage_err) <= engage:
+                        continue
+                    drone.yaw_gate_engaged = True
+                # Gate is firing: brake translation, override yaw to align.
+                if v_n > 1e-3:
+                    # Cap brake magnitude so we don't overshoot zero in one step.
+                    brake_mag = min(self.drone_cfg.max_accel, v_n / step_seconds)
+                    accel_lin[i, 0] = -brake_mag * v[0] / v_n
+                    accel_lin[i, 1] = -brake_mag * v[1] / v_n
+                else:
+                    accel_lin[i, 0] = 0.0
+                    accel_lin[i, 1] = 0.0
+                # Time-optimal yaw: full accel until braking distance equals
+                # remaining error, then full decel. Signed for either direction.
+                yr = drone.yaw_rate
+                brake_dist = yr * abs(yr) / (2.0 * max_ya)  # signed
+                if heading_err > brake_dist:
+                    accel_yaw[i] = max_ya
+                elif heading_err < brake_dist:
+                    accel_yaw[i] = -max_ya
+                else:
+                    accel_yaw[i] = 0.0
 
         for i, drone in enumerate(self.drones):
             # Voltage cutoff: depleted drones freeze in place and stop draining.

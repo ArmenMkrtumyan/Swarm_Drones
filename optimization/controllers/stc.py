@@ -45,13 +45,33 @@ class STCConfig:
     # attract=4.0 — STC's planned walk benefits from a strong pull toward
     # the next cell so the drone commits to following the plan instead of
     # being deflected by repulsions.
-    attract_gain: float = 4.0
-    drone_repel_gain: float = 10.0
-    drone_repel_range: float = 4.0
-    wall_repel_gain: float = 2.0
+    attract_gain: float = 2.49   # BO-tuned (was 4.0)
+    attract_damp_gain: float = 0.6623   # see PFConfig.attract_damp_gain  (BO; was 0.2)
+    drone_repel_gain: float = 4.1009   # BO-tuned (was 10.0)
+    drone_repel_range: float = 2.044   # BO-tuned (was 4.0)
+    wall_repel_gain: float = 1.9337   # BO-tuned (was 2.0)
     wall_repel_range: float = 1.5
     yaw_align_gain: float = 6.0
+    yaw_damp_gain: float = 4.9   # critical damping K_d = 2·√K_p; see PFConfig
     velocity_align_threshold: float = 0.05
+
+    # Stuck-detector + per-drone target blacklist. Same rationale as
+    # BoustrophedonConfig.stuck_*: the controller has no path planner, so
+    # when the next walk cell sits on the far side of a wall, attract pulls
+    # toward it and wall_repel pushes back — drone idles at the wall. The
+    # detector watches per-target distance progress; if it doesn't shrink by
+    # `stuck_min_progress` cells in `stuck_timeout_s` seconds, the cell is
+    # declared unreachable. On stuck, the walk index advances by
+    # `stuck_skip_n` AND the cell goes onto a per-drone blacklist so the
+    # walk-skip loop AND the fallback nearest-uncov picker both ignore it.
+    # The blacklist clears once the drone has moved
+    # `blacklist_decay_distance` cells away from where the last entry was
+    # added — by then the drone has a new vantage point and previously
+    # unreachable cells may now be reachable from a different angle.
+    stuck_timeout_s: float = 5.0
+    stuck_min_progress: float = 0.3
+    stuck_skip_n: int = 3
+    blacklist_decay_distance: float = 5.0
 
 
 class STCController:
@@ -67,10 +87,21 @@ class STCController:
         # Per-drone walk: list of (y, x) tuples in BFS order from drone start.
         self._walks: Optional[list[list[tuple[int, int]]]] = None
         self._walk_idx: Optional[list[int]] = None
+        # Stuck-detection + per-drone (y, x) blacklist of unreachable cells.
+        self._stuck_best_dist: Optional[list[float]] = None
+        self._stuck_anchor_t: Optional[list[float]] = None
+        self._last_targets: Optional[list[Optional[np.ndarray]]] = None
+        self._blacklist: Optional[list[set[tuple[int, int]]]] = None
+        self._blacklist_anchor_pos: Optional[list[np.ndarray]] = None
 
     def reset(self) -> None:
         self._walks = None
         self._walk_idx = None
+        self._stuck_best_dist = None
+        self._stuck_anchor_t = None
+        self._last_targets = None
+        self._blacklist = None
+        self._blacklist_anchor_pos = None
 
     def viz_overlay(self, env: CoverageEnv) -> dict:
         n = env.n_drones
@@ -163,7 +194,13 @@ class STCController:
         if self._walks is None or len(self._walks) != n:
             self._walks = self._compute_plans(env)
             self._walk_idx = [0] * n
+            self._stuck_best_dist = [float('inf')] * n
+            self._stuck_anchor_t = [env.time_seconds] * n
+            self._last_targets = [None] * n
+            self._blacklist = [set() for _ in range(n)]
+            self._blacklist_anchor_pos = [d.pos.copy() for d in env.drones]
 
+        h, w = env.grid.shape
         free_mask = env.grid == FREE
         wy, wx = np.where(env.grid == WALL)
         has_walls = len(wy) > 0
@@ -180,18 +217,62 @@ class STCController:
                 continue
 
             walk = self._walks[i]
-            # Skip cells in the walk that are already covered.
+
+            # --- Stuck detection on previous step's target ---
+            # If the drone hasn't been closing distance to the last target
+            # we asked it to pursue, declare that cell unreachable: blacklist
+            # it AND advance the walk so we don't re-pick adjacent neighbors
+            # that share the same unreachable side of the obstruction.
+            prev = self._last_targets[i]
+            if prev is not None:
+                dist_prev = float(np.linalg.norm(drone.pos - prev))
+                if dist_prev < self._stuck_best_dist[i] - cfg.stuck_min_progress:
+                    self._stuck_best_dist[i] = dist_prev
+                    self._stuck_anchor_t[i] = env.time_seconds
+                elif (env.time_seconds - self._stuck_anchor_t[i]
+                      > cfg.stuck_timeout_s):
+                    bx, by = int(prev[0]), int(prev[1])
+                    self._blacklist[i].add((by, bx))
+                    self._blacklist_anchor_pos[i] = drone.pos.copy()
+                    self._walk_idx[i] = min(self._walk_idx[i] + cfg.stuck_skip_n,
+                                            len(walk))
+                    self._stuck_best_dist[i] = float('inf')
+                    self._stuck_anchor_t[i] = env.time_seconds
+
+            # --- Position-based blacklist decay ---
+            # Once the drone has wandered far from where the last unreachable
+            # cell was logged, the geometry around it has changed enough that
+            # old blacklist entries may now be reachable from a new angle.
+            moved = float(np.linalg.norm(
+                drone.pos - self._blacklist_anchor_pos[i]
+            ))
+            if moved > cfg.blacklist_decay_distance:
+                self._blacklist[i].clear()
+                self._blacklist_anchor_pos[i] = drone.pos.copy()
+
+            # Skip cells in the walk that are already covered OR blacklisted.
             while self._walk_idx[i] < len(walk):
                 y, x = walk[self._walk_idx[i]]
-                if env.covered[y, x]:
+                if env.covered[y, x] or (y, x) in self._blacklist[i]:
                     self._walk_idx[i] += 1
                 else:
                     break
 
             if self._walk_idx[i] >= len(walk):
-                # Walk done — fall back to nearest uncov globally.
+                # Walk done — fall back to nearest uncov globally, excluding
+                # this drone's blacklist. If every uncov cell is blacklisted,
+                # clear the blacklist and retry (better to oscillate than idle).
                 uncov_mask = free_mask & ~env.covered
+                if self._blacklist[i]:
+                    uncov_mask = uncov_mask.copy()
+                    for (by, bx) in self._blacklist[i]:
+                        if 0 <= by < h and 0 <= bx < w:
+                            uncov_mask[by, bx] = False
+                    if not uncov_mask.any():
+                        self._blacklist[i].clear()
+                        uncov_mask = free_mask & ~env.covered
                 if not uncov_mask.any():
+                    self._last_targets[i] = None
                     continue
                 uy, ux = np.where(uncov_mask)
                 cand_pos = np.column_stack([ux + 0.5, uy + 0.5])
@@ -201,11 +282,19 @@ class STCController:
                 y, x = walk[self._walk_idx[i]]
                 target = np.array([x + 0.5, y + 0.5], dtype=np.float64)
 
+            # If the target changed step-to-step, the previous best_dist is
+            # tracking the wrong cell — reset so the new target gets a fresh
+            # timeout budget.
+            if prev is None or not np.allclose(target, prev, atol=0.1):
+                self._stuck_best_dist[i] = float('inf')
+                self._stuck_anchor_t[i] = env.time_seconds
+            self._last_targets[i] = target.copy()
+
             # ---- attract toward target ----
             offset = target - drone.pos
             dist = float(np.linalg.norm(offset))
             if dist > 1e-9:
-                a = cfg.attract_gain * (offset / dist)
+                a = cfg.attract_gain * (offset / dist) - cfg.attract_damp_gain * drone.vel
             else:
                 a = np.zeros(2)
 
@@ -241,7 +330,7 @@ class STCController:
                     2 * math.pi
                 ) - math.pi
                 actions[i, 2] = float(
-                    np.clip(cfg.yaw_align_gain * err,
+                    np.clip(cfg.yaw_align_gain * err - cfg.yaw_damp_gain * drone.yaw_rate,
                             -max_yaw_accel, max_yaw_accel)
                 )
 
