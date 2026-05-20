@@ -1,0 +1,141 @@
+{
+  "boustrophedon": {
+    "best_value": 0.5565835114678236,
+    "best_params": {
+      "lane_spacing": 3.447983400484169,
+      "attract_gain": 1.2834289134362535,
+      "attract_damp_gain": 0.7051349974305061,
+      "drone_repel_gain": 1.1089326585829193,
+      "drone_repel_range": 4.379338151451566,
+      "wall_repel_gain": 0.6703020889662534
+    },
+    "wall_seconds": 724.9109299182892
+  },
+  "spiral": {
+    "best_value": 0.5292373794899509,
+    "best_params": {
+      "pitch": 2.5446121921996023,
+      "attract_gain": 2.429971022821351,
+      "attract_damp_gain": 0.09555854675273291,
+      "drone_repel_gain": 7.953646425436393,
+      "drone_repel_range": 3.1575043071118953,
+      "wall_repel_gain": 1.4287264304207052
+    },
+    "wall_seconds": 677.2658071517944
+  },
+  "voronoi": {
+    "best_value": 0.6710682159314939,
+    "best_params": {
+      "attract_gain": 1.4942539256791787,
+      "attract_damp_gain": 0.9953361245679073,
+      "drone_repel_gain": 0.8662896293007394,
+      "drone_repel_range": 5.162246024624676,
+      "wall_repel_gain": 0.6289114199222093
+    },
+    "wall_seconds": 831.5320031642914
+  },
+  "grid_decomp": {
+    "best_value": 0.6365360219498618,
+    "best_params": {
+      "block_size": 5,
+      "attract_gain": 3.026332088904944,
+      "attract_damp_gain": 0.08514164524147487,
+      "drone_repel_gain": 3.705377313915973,
+      "drone_repel_range": 2.854768454111678,
+      "wall_repel_gain": 2.2397416974947504
+    },
+    "wall_seconds": 776.323520898819
+  },
+  "stc": {
+    "best_value": 0.6433494120371714,
+    "best_params": {
+      "attract_gain": 2.490044496522669,
+      "attract_damp_gain": 0.6622844704523333,
+      "drone_repel_gain": 4.1008641043865,
+      "drone_repel_range": 2.043956756975085,
+      "wall_repel_gain": 1.93371890796805
+    },
+    "wall_seconds": 736.5795168876648
+  },
+  "pso": {
+    "best_value": 0.60325345376971,
+    "best_params": {
+      "inertia": 0.07732404129016106,
+      "cognitive": 3.221724376160705,
+      "social": 0.013739312946093372,
+      "attract_damp_gain": 0.6908321509099095,
+      "wall_repel_gain": 1.6511432549852418
+    },
+    "wall_seconds": 800.8575508594513
+  },
+  "ga": {
+    "best_value": 0.6453094305110868,
+    "best_params": {
+      "p_mutation": 0.3510383257013727,
+      "p_crossover": 0.15144789935122865,
+      "elite_fraction": 0.39941106126526804,
+      "attract_gain": 3.1629478694085504,
+      "attract_damp_gain": 0.9990415228294238,
+      "drone_repel_gain": 7.484236835802416
+    },
+    "wall_seconds": 561.4395582675934
+  },
+  "sa": {
+    "best_value": 0.6453240899729387,
+    "best_params": {
+      "T_initial": 3.3144612046382234,
+      "cooling_rate": 0.961649779364165,
+      "perturb_radius": 1.2299454532948886,
+      "attract_gain": 3.3617538966790272,
+      "attract_damp_gain": 0.3477081818904833,
+      "drone_repel_gain": 4.412387903116375
+    },
+    "wall_seconds": 525.054102897644
+  },
+  "aco": {
+    "best_value": 0.6141955561343878,
+    "best_params": {
+      "pheromone_weight": 0.9291023391501487,
+      "heuristic_weight": 3.61531015132784,
+      "evaporation_rate": 0.016457815046652557,
+      "target_search_radius": 6.298235387943153,
+      "attract_gain": 3.645375649128204,
+      "attract_damp_gain": 0.2894580321327092
+    },
+    "wall_seconds": 554.8240268230438
+  },
+  "gwo": {
+    "best_value": 0.24754051445462477,
+    "best_params": {
+      "a_initial": 2.879347558657792,
+      "a_final": 0.6774687921218294,
+      "decay_steps": 206,
+      "attract_damp_gain": 0.05055887997041598,
+      "wall_repel_gain": 2.7022355803384226
+    },
+    "wall_seconds": 986.91148686409
+  },
+  "pf": {
+    "best_value": 0.5923315055761506,
+    "best_params": {
+      "attract_gain": 2.893884500835992,
+      "attract_damp_gain": 0.12142669311186298,
+      "drone_repel_gain": 2.0103112270185726,
+      "drone_repel_range": 2.6191813660394696,
+      "wall_repel_gain": 2.9240143855847673,
+      "wall_repel_range": 1.671921177714055
+    },
+    "wall_seconds": 663.0873520374298
+  },
+  "consensus": {
+    "best_value": 0.6188384367023761,
+    "best_params": {
+      "attract_gain": 4.789373879141246,
+      "attract_damp_gain": 0.6808911508694425,
+      "drone_repel_gain": 1.7858983314273935,
+      "drone_repel_range": 1.367197250660964,
+      "wall_repel_gain": 3.0574868258150505
+    },
+    "wall_seconds": 731.4552519321442
+  }
+}

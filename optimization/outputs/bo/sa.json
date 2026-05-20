@@ -1,0 +1,376 @@
+{
+  "controller": "sa",
+  "n_trials": 30,
+  "wall_seconds": 525.0507950782776,
+  "best_value": 0.6453240899729387,
+  "best_params": {
+    "T_initial": 3.3144612046382234,
+    "cooling_rate": 0.961649779364165,
+    "perturb_radius": 1.2299454532948886,
+    "attract_gain": 3.3617538966790272,
+    "attract_damp_gain": 0.3477081818904833,
+    "drone_repel_gain": 4.412387903116375
+  },
+  "trials": [
+    {
+      "number": 0,
+      "value": 0.556253793343914,
+      "params": {
+        "T_initial": 1.5355286838886855,
+        "cooling_rate": 0.9941207163345817,
+        "perturb_radius": 7.587945476302646,
+        "attract_gain": 1.9843966652221854,
+        "attract_damp_gain": 0.07979118876474872,
+        "drone_repel_gain": 1.4321698289111515
+      }
+    },
+    {
+      "number": 1,
+      "value": 0.6126722958205146,
+      "params": {
+        "T_initial": 0.5950295391592122,
+        "cooling_rate": 0.9857514384317185,
+        "perturb_radius": 6.41003510568888,
+        "attract_gain": 2.5529516046973773,
+        "attract_damp_gain": 0.05318033256270143,
+        "drone_repel_gain": 9.330606024425668
+      }
+    },
+    {
+      "number": 2,
+      "value": 0.5078265411425456,
+      "params": {
+        "T_initial": 6.053448468001084,
+        "cooling_rate": 0.9210215719571494,
+        "perturb_radius": 2.636424704863906,
+        "attract_gain": 0.7627364729026304,
+        "attract_damp_gain": 0.12439367209907215,
+        "drone_repel_gain": 3.347776308515933
+      }
+    },
+    {
+      "number": 3,
+      "value": 0.49368357009807246,
+      "params": {
+        "T_initial": 1.823658142455605,
+        "cooling_rate": 0.9288316848796062,
+        "perturb_radius": 6.506676052501415,
+        "attract_gain": 0.6893882309676883,
+        "attract_damp_gain": 0.11996621453406359,
+        "drone_repel_gain": 2.324672848950434
+      }
+    },
+    {
+      "number": 4,
+      "value": 0.5681891612639629,
+      "params": {
+        "T_initial": 1.9603369861210684,
+        "cooling_rate": 0.9777324201779084,
+        "perturb_radius": 2.7970640394252375,
+        "attract_gain": 1.6338208828908807,
+        "attract_damp_gain": 0.2949301205216347,
+        "drone_repel_gain": 1.1128853174905728
+      }
+    },
+    {
+      "number": 5,
+      "value": 0.6322402762790628,
+      "params": {
+        "T_initial": 3.0860579740535368,
+        "cooling_rate": 0.9168818882450419,
+        "perturb_radius": 1.5854643368675156,
+        "attract_gain": 4.4448339535094625,
+        "attract_damp_gain": 0.9021655603568132,
+        "drone_repel_gain": 6.432759992849893
+      }
+    },
+    {
+      "number": 6,
+      "value": 0.5163337883342815,
+      "params": {
+        "T_initial": 1.2453219846912196,
+        "cooling_rate": 0.9096695392866321,
+        "perturb_radius": 7.158097238609412,
+        "attract_gain": 1.377597982475538,
+        "attract_damp_gain": 0.07206848764305199,
+        "drone_repel_gain": 3.1273530367803706
+      }
+    },
+    {
+      "number": 7,
+      "value": 0.5705722909118768,
+      "params": {
+        "T_initial": 0.5542561258655851,
+        "cooling_rate": 0.9900227198057995,
+        "perturb_radius": 3.3290198344001523,
+        "attract_gain": 2.2987528923660823,
+        "attract_damp_gain": 0.12720830454691837,
+        "drone_repel_gain": 3.3118298880723813
+      }
+    },
+    {
+      "number": 8,
+      "value": 0.5834289103962538,
+      "params": {
+        "T_initial": 2.5719142025384643,
+        "cooling_rate": 0.9183005910970272,
+        "perturb_radius": 9.726261649881026,
+        "attract_gain": 2.9792217348362584,
+        "attract_damp_gain": 0.8342309693146734,
+        "drone_repel_gain": 7.849235338159358
+      }
+    },
+    {
+      "number": 9,
+      "value": 0.4848394295484444,
+      "params": {
+        "T_initial": 2.99816694120633,
+        "cooling_rate": 0.9912655492672886,
+        "perturb_radius": 1.7964325184672756,
+        "attract_gain": 0.7851504189403354,
+        "attract_damp_gain": 0.05725482134163319,
+        "drone_repel_gain": 2.1150972021685583
+      }
+    },
+    {
+      "number": 10,
+      "value": 0.616756670739157,
+      "params": {
+        "T_initial": 8.739245354178951,
+        "cooling_rate": 0.9468594048240122,
+        "perturb_radius": 4.318558954489876,
+        "attract_gain": 4.5093592238056415,
+        "attract_damp_gain": 0.9529026160485108,
+        "drone_repel_gain": 6.058669604321785
+      }
+    },
+    {
+      "number": 11,
+      "value": 0.6145578951716443,
+      "params": {
+        "T_initial": 9.476681716997613,
+        "cooling_rate": 0.949969248172357,
+        "perturb_radius": 4.534860354291363,
+        "attract_gain": 4.97065399770045,
+        "attract_damp_gain": 0.9875032201521765,
+        "drone_repel_gain": 5.810125412375463
+      }
+    },
+    {
+      "number": 12,
+      "value": 0.623607780846246,
+      "params": {
+        "T_initial": 4.751279538267835,
+        "cooling_rate": 0.9438817940867577,
+        "perturb_radius": 4.082643943639809,
+        "attract_gain": 4.626582679775709,
+        "attract_damp_gain": 0.589154348566538,
+        "drone_repel_gain": 5.506165717796819
+      }
+    },
+    {
+      "number": 13,
+      "value": 0.6428292179341554,
+      "params": {
+        "T_initial": 4.401769674020868,
+        "cooling_rate": 0.9402703996724318,
+        "perturb_radius": 1.5125697053584355,
+        "attract_gain": 3.6477940571867697,
+        "attract_damp_gain": 0.4992090077076047,
+        "drone_repel_gain": 4.914037930516809
+      }
+    },
+    {
+      "number": 14,
+      "value": 0.6184157885360775,
+      "params": {
+        "T_initial": 4.085108283175785,
+        "cooling_rate": 0.9033250026085128,
+        "perturb_radius": 1.0333138721021924,
+        "attract_gain": 3.7466165691344044,
+        "attract_damp_gain": 0.4550576890198257,
+        "drone_repel_gain": 4.486835489809105
+      }
+    },
+    {
+      "number": 15,
+      "value": 0.6453240899729387,
+      "params": {
+        "T_initial": 3.3144612046382234,
+        "cooling_rate": 0.961649779364165,
+        "perturb_radius": 1.2299454532948886,
+        "attract_gain": 3.3617538966790272,
+        "attract_damp_gain": 0.3477081818904833,
+        "drone_repel_gain": 4.412387903116375
+      }
+    },
+    {
+      "number": 16,
+      "value": 0.5590565693267976,
+      "params": {
+        "T_initial": 6.224237300917695,
+        "cooling_rate": 0.9691536938118719,
+        "perturb_radius": 2.2493155379732905,
+        "attract_gain": 1.1473925496243118,
+        "attract_damp_gain": 0.2824439995951444,
+        "drone_repel_gain": 4.479410490748425
+      }
+    },
+    {
+      "number": 17,
+      "value": 0.635908216109434,
+      "params": {
+        "T_initial": 4.027420276026831,
+        "cooling_rate": 0.9617129175591078,
+        "perturb_radius": 5.2933557455166245,
+        "attract_gain": 3.1384884941757485,
+        "attract_damp_gain": 0.4728573594185155,
+        "drone_repel_gain": 4.257764424195168
+      }
+    },
+    {
+      "number": 18,
+      "value": 0.6057702990800897,
+      "params": {
+        "T_initial": 0.987959401099485,
+        "cooling_rate": 0.934800644155188,
+        "perturb_radius": 3.425258317252819,
+        "attract_gain": 3.41022807479213,
+        "attract_damp_gain": 0.1840438365969184,
+        "drone_repel_gain": 2.228795816957192
+      }
+    },
+    {
+      "number": 19,
+      "value": 0.6118194564604618,
+      "params": {
+        "T_initial": 6.268362537266451,
+        "cooling_rate": 0.9607243694678297,
+        "perturb_radius": 1.0041487371989024,
+        "attract_gain": 2.0004759024627283,
+        "attract_damp_gain": 0.36176740802067076,
+        "drone_repel_gain": 7.722794361651064
+      }
+    },
+    {
+      "number": 20,
+      "value": 0.5327957288337445,
+      "params": {
+        "T_initial": 3.405639329268131,
+        "cooling_rate": 0.9559348804968502,
+        "perturb_radius": 9.101933531047042,
+        "attract_gain": 0.9754541909655271,
+        "attract_damp_gain": 0.18514587781869862,
+        "drone_repel_gain": 2.784994259025061
+      }
+    },
+    {
+      "number": 21,
+      "value": 0.6037478259252059,
+      "params": {
+        "T_initial": 4.484881566996375,
+        "cooling_rate": 0.9652566475483949,
+        "perturb_radius": 5.021221122085665,
+        "attract_gain": 3.1002388733704507,
+        "attract_damp_gain": 0.5676999568530473,
+        "drone_repel_gain": 4.313450746738344
+      }
+    },
+    {
+      "number": 22,
+      "value": 0.6298784814762773,
+      "params": {
+        "T_initial": 3.6530264510828396,
+        "cooling_rate": 0.9765959311095752,
+        "perturb_radius": 5.955125012202876,
+        "attract_gain": 2.764049642889154,
+        "attract_damp_gain": 0.47016861740156496,
+        "drone_repel_gain": 4.0483318657151575
+      }
+    },
+    {
+      "number": 23,
+      "value": 0.6072840505515592,
+      "params": {
+        "T_initial": 2.4377937194425052,
+        "cooling_rate": 0.9380383142659177,
+        "perturb_radius": 3.2080119845680772,
+        "attract_gain": 3.6648574073867457,
+        "attract_damp_gain": 0.37595481975569717,
+        "drone_repel_gain": 5.092262451899837
+      }
+    },
+    {
+      "number": 24,
+      "value": 0.5780035171637351,
+      "params": {
+        "T_initial": 4.93619088873967,
+        "cooling_rate": 0.9530196656952079,
+        "perturb_radius": 8.20636997902229,
+        "attract_gain": 2.145855121951923,
+        "attract_damp_gain": 0.6909625383276672,
+        "drone_repel_gain": 3.8772369280178256
+      }
+    },
+    {
+      "number": 25,
+      "value": 0.6168838171547381,
+      "params": {
+        "T_initial": 5.799416629222153,
+        "cooling_rate": 0.9720359361936568,
+        "perturb_radius": 2.026829206207713,
+        "attract_gain": 3.7480052953450285,
+        "attract_damp_gain": 0.2565636617102131,
+        "drone_repel_gain": 7.3043560408046915
+      }
+    },
+    {
+      "number": 26,
+      "value": 0.5158094807420083,
+      "params": {
+        "T_initial": 2.6185869294860082,
+        "cooling_rate": 0.9612607013373393,
+        "perturb_radius": 5.0175888653815415,
+        "attract_gain": 0.5133846769904011,
+        "attract_damp_gain": 0.3841402998578886,
+        "drone_repel_gain": 5.071015135440953
+      }
+    },
+    {
+      "number": 27,
+      "value": 0.5811370222568409,
+      "params": {
+        "T_initial": 7.511181005587893,
+        "cooling_rate": 0.9384446160142235,
+        "perturb_radius": 3.78593670230272,
+        "attract_gain": 1.6453495847279462,
+        "attract_damp_gain": 0.6438841074098463,
+        "drone_repel_gain": 2.6219648630810397
+      }
+    },
+    {
+      "number": 28,
+      "value": 0.6161203560585529,
+      "params": {
+        "T_initial": 3.732667779050423,
+        "cooling_rate": 0.929802081072603,
+        "perturb_radius": 1.5304780826335498,
+        "attract_gain": 2.4806484796768595,
+        "attract_damp_gain": 0.4523868258181543,
+        "drone_repel_gain": 1.7759625772261929
+      }
+    },
+    {
+      "number": 29,
+      "value": 0.5527642373943783,
+      "params": {
+        "T_initial": 1.486481475371135,
+        "cooling_rate": 0.9987495130196163,
+        "perturb_radius": 8.087642639899313,
+        "attract_gain": 1.8572718655162412,
+        "attract_damp_gain": 0.2242188778110521,
+        "drone_repel_gain": 3.7812841076399053
+      }
+    }
+  ]
+}

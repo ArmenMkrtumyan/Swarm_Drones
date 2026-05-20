@@ -1,0 +1,345 @@
+{
+  "controller": "gwo",
+  "n_trials": 30,
+  "wall_seconds": 986.907308101654,
+  "best_value": 0.24754051445462477,
+  "best_params": {
+    "a_initial": 2.879347558657792,
+    "a_final": 0.6774687921218294,
+    "decay_steps": 206,
+    "attract_damp_gain": 0.05055887997041598,
+    "wall_repel_gain": 2.7022355803384226
+  },
+  "trials": [
+    {
+      "number": 0,
+      "value": 0.18341855465151502,
+      "params": {
+        "a_initial": 1.749080237694725,
+        "a_final": 0.9507143064099162,
+        "decay_steps": 447,
+        "attract_damp_gain": 0.30049873591901566,
+        "wall_repel_gain": 0.7161246859115125
+      }
+    },
+    {
+      "number": 1,
+      "value": 0.021620264134882716,
+      "params": {
+        "a_initial": 1.3119890406724053,
+        "a_final": 0.05808361216819946,
+        "decay_steps": 669,
+        "attract_damp_gain": 0.30271829277346235,
+        "wall_repel_gain": 2.5529516046973773
+      }
+    },
+    {
+      "number": 2,
+      "value": 0.2278240000421261,
+      "params": {
+        "a_initial": 1.041168988591605,
+        "a_final": 0.9699098521619943,
+        "decay_steps": 605,
+        "attract_damp_gain": 0.09445600138094695,
+        "wall_repel_gain": 0.7599674150654903
+      }
+    },
+    {
+      "number": 3,
+      "value": 0.10964531449575697,
+      "params": {
+        "a_initial": 1.3668090197068676,
+        "a_final": 0.3042422429595377,
+        "decay_steps": 240,
+        "attract_damp_gain": 0.1823658142455605,
+        "wall_repel_gain": 0.9776854331372623
+      }
+    },
+    {
+      "number": 4,
+      "value": 0.09107715111370068,
+      "params": {
+        "a_initial": 2.223705789444759,
+        "a_final": 0.13949386065204183,
+        "decay_steps": 119,
+        "attract_damp_gain": 0.1498365454855079,
+        "wall_repel_gain": 1.4290255329034678
+      }
+    },
+    {
+      "number": 5,
+      "value": 0.08881345110320583,
+      "params": {
+        "a_initial": 2.570351922786027,
+        "a_final": 0.19967378215835974,
+        "decay_steps": 232,
+        "attract_damp_gain": 0.2949301205216347,
+        "wall_repel_gain": 0.5564426587452863
+      }
+    },
+    {
+      "number": 6,
+      "value": 0.09650660798857282,
+      "params": {
+        "a_initial": 2.2150897038028767,
+        "a_final": 0.17052412368729153,
+        "decay_steps": 60,
+        "attract_damp_gain": 0.8580222514877407,
+        "wall_repel_gain": 4.619575159813622
+      }
+    },
+    {
+      "number": 7,
+      "value": 0.08176742194727527,
+      "params": {
+        "a_initial": 2.6167946962329225,
+        "a_final": 0.3046137691733707,
+        "decay_steps": 66,
+        "attract_damp_gain": 0.3883092140196443,
+        "wall_repel_gain": 1.377597982475538
+      }
+    },
+    {
+      "number": 8,
+      "value": 0.10509426751724911,
+      "params": {
+        "a_initial": 1.2440764696895577,
+        "a_final": 0.4951769101112702,
+        "decay_steps": 55,
+        "attract_damp_gain": 0.7621195864233183,
+        "wall_repel_gain": 0.9072980676745123
+      }
+    },
+    {
+      "number": 9,
+      "value": 0.15880142970195815,
+      "params": {
+        "a_initial": 2.325044568707964,
+        "a_final": 0.31171107608941095,
+        "decay_steps": 236,
+        "attract_damp_gain": 0.25719142025384634,
+        "wall_repel_gain": 0.7652872182750088
+      }
+    },
+    {
+      "number": 10,
+      "value": 0.15493851489179136,
+      "params": {
+        "a_initial": 1.7721064265035125,
+        "a_final": 0.9327152833768843,
+        "decay_steps": 913,
+        "attract_damp_gain": 0.054637087405855086,
+        "wall_repel_gain": 2.2430376072276923
+      }
+    },
+    {
+      "number": 11,
+      "value": 0.14720557756995362,
+      "params": {
+        "a_initial": 1.7520466043986813,
+        "a_final": 0.9871177847451756,
+        "decay_steps": 447,
+        "attract_damp_gain": 0.08569152935155765,
+        "wall_repel_gain": 0.5087455724314981
+      }
+    },
+    {
+      "number": 12,
+      "value": 0.17842569675189013,
+      "params": {
+        "a_initial": 1.0243678885043055,
+        "a_final": 0.7757183712887339,
+        "decay_steps": 478,
+        "attract_damp_gain": 0.11690739559375941,
+        "wall_repel_gain": 0.718904753708633
+      }
+    },
+    {
+      "number": 13,
+      "value": 0.15528179156480107,
+      "params": {
+        "a_initial": 1.6751287843794371,
+        "a_final": 0.689890423349692,
+        "decay_steps": 435,
+        "attract_damp_gain": 0.5286509767606815,
+        "wall_repel_gain": 1.1015360983031346
+      }
+    },
+    {
+      "number": 14,
+      "value": 0.18913426890859678,
+      "params": {
+        "a_initial": 1.597292866539898,
+        "a_final": 0.7908357982212786,
+        "decay_steps": 985,
+        "attract_damp_gain": 0.06476473044681612,
+        "wall_repel_gain": 0.6490940701274948
+      }
+    },
+    {
+      "number": 15,
+      "value": 0.206615589087798,
+      "params": {
+        "a_initial": 2.9313891508839465,
+        "a_final": 0.7719295837601932,
+        "decay_steps": 989,
+        "attract_damp_gain": 0.05872194714123204,
+        "wall_repel_gain": 2.2899485753107887
+      }
+    },
+    {
+      "number": 16,
+      "value": 0.24450190929066373,
+      "params": {
+        "a_initial": 2.9987248772831023,
+        "a_final": 0.5888169616680107,
+        "decay_steps": 672,
+        "attract_damp_gain": 0.09224145810331316,
+        "wall_repel_gain": 2.3138608538704157
+      }
+    },
+    {
+      "number": 17,
+      "value": 0.22908589873405757,
+      "params": {
+        "a_initial": 2.996048739765465,
+        "a_final": 0.5460502071617207,
+        "decay_steps": 628,
+        "attract_damp_gain": 0.08709605461899614,
+        "wall_repel_gain": 3.2023831440251165
+      }
+    },
+    {
+      "number": 18,
+      "value": 0.2298947908949205,
+      "params": {
+        "a_initial": 2.9980235401189304,
+        "a_final": 0.5311240303514603,
+        "decay_steps": 150,
+        "attract_damp_gain": 0.13917408472607348,
+        "wall_repel_gain": 3.617307560682293
+      }
+    },
+    {
+      "number": 19,
+      "value": 0.20428686451864808,
+      "params": {
+        "a_initial": 2.744238980079487,
+        "a_final": 0.5396860128758314,
+        "decay_steps": 154,
+        "attract_damp_gain": 0.13942995540363134,
+        "wall_repel_gain": 4.54125191424288
+      }
+    },
+    {
+      "number": 20,
+      "value": 0.15596178367022817,
+      "params": {
+        "a_initial": 2.7997204262088804,
+        "a_final": 0.45810838601637144,
+        "decay_steps": 94,
+        "attract_damp_gain": 0.19639666417323895,
+        "wall_repel_gain": 3.52152598801039
+      }
+    },
+    {
+      "number": 21,
+      "value": 0.24647159127373208,
+      "params": {
+        "a_initial": 2.9446578184906267,
+        "a_final": 0.6574004959005502,
+        "decay_steps": 325,
+        "attract_damp_gain": 0.0832961510776673,
+        "wall_repel_gain": 3.146328294403744
+      }
+    },
+    {
+      "number": 22,
+      "value": 0.17014218010640156,
+      "params": {
+        "a_initial": 2.468621513998998,
+        "a_final": 0.6484112247622568,
+        "decay_steps": 319,
+        "attract_damp_gain": 0.11362144221538902,
+        "wall_repel_gain": 1.8292978507262476
+      }
+    },
+    {
+      "number": 23,
+      "value": 0.2074788106909949,
+      "params": {
+        "a_initial": 2.827065041938521,
+        "a_final": 0.6182888128740075,
+        "decay_steps": 147,
+        "attract_damp_gain": 0.07035702689227412,
+        "wall_repel_gain": 3.258094748952607
+      }
+    },
+    {
+      "number": 24,
+      "value": 0.1680465366867848,
+      "params": {
+        "a_initial": 2.999443424499549,
+        "a_final": 0.42663040003912733,
+        "decay_steps": 349,
+        "attract_damp_gain": 0.14730736412773468,
+        "wall_repel_gain": 2.8415547386144717
+      }
+    },
+    {
+      "number": 25,
+      "value": 0.1958667694065623,
+      "params": {
+        "a_initial": 2.708094490698468,
+        "a_final": 0.3867726128082969,
+        "decay_steps": 172,
+        "attract_damp_gain": 0.10669458613765555,
+        "wall_repel_gain": 3.9744750007818768
+      }
+    },
+    {
+      "number": 26,
+      "value": 0.17906870177861767,
+      "params": {
+        "a_initial": 2.450060642564477,
+        "a_final": 0.5954260076608708,
+        "decay_steps": 325,
+        "attract_damp_gain": 0.07601029674851349,
+        "wall_repel_gain": 1.8825082354298657
+      }
+    },
+    {
+      "number": 27,
+      "value": 0.22343528409394095,
+      "params": {
+        "a_initial": 2.038792786444038,
+        "a_final": 0.836188630457436,
+        "decay_steps": 91,
+        "attract_damp_gain": 0.17930703977593723,
+        "wall_repel_gain": 3.8058168624498845
+      }
+    },
+    {
+      "number": 28,
+      "value": 0.24754051445462477,
+      "params": {
+        "a_initial": 2.879347558657792,
+        "a_final": 0.6774687921218294,
+        "decay_steps": 206,
+        "attract_damp_gain": 0.05055887997041598,
+        "wall_repel_gain": 2.7022355803384226
+      }
+    },
+    {
+      "number": 29,
+      "value": 0.21811623387507165,
+      "params": {
+        "a_initial": 2.8301399603331734,
+        "a_final": 0.6980966400054013,
+        "decay_steps": 279,
+        "attract_damp_gain": 0.05305036969439237,
+        "wall_repel_gain": 1.7796186478082292
+      }
+    }
+  ]
+}

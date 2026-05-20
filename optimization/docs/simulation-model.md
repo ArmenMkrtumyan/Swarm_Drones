@@ -75,7 +75,7 @@ Two families of metrics live on `CoverageEnv`, addressing different questions:
   - `unique_cells_visited(i)`, `self_revisits(i)`, `cross_overlap_visits(i)` — derived from `entry_count`.
   - `wasted_visits_total()` — swarm-wide redundant entries (self + cross). Single-number proxy for "energy spent re-covering ground."
 
-Visit-count semantics are verified by [`verification_scripts/test_overlap.py`](../verification_scripts/test_overlap.py).
+Visit-count semantics are verified by [`tools/verification/test_overlap.py`](../tools/verification/test_overlap.py).
 
 ## Intentionally omitted in 2D (gap to Isaac / 3D bridge)
 

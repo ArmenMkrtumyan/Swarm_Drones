@@ -42,7 +42,7 @@ from constants import (
 )
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import load_map, random_obstacles, recursive_backtracker
-from visualize import animate, init_drone_palette, render_frame
+from tools.visualize import animate, init_drone_palette, render_frame
 
 # Lazy-import controllers so PF / Consensus work even when torch isn't
 # installed; only MARL fails-fast on missing torch.

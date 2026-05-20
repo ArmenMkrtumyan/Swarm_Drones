@@ -88,9 +88,8 @@ class ConsensusConfig:
     @classmethod
     def sparse(cls) -> "ConsensusConfig":
         """
-        Preset tuned for sparse swarms (n ≤ 2). Tuned via
-        `tools/grid_search.py --policy consensus --drones 2`; lifts
-        composite score modestly (+0.514 → +0.532 on partial_33 × n=2).
+        Preset tuned for sparse swarms (n ≤ 2). Lighter repulsion and lower
+        attract gain reduce oscillation when drones rarely interact.
         """
         return cls(
             attract_gain=1.5,
@@ -103,9 +102,7 @@ class ConsensusConfig:
         """
         Same 7-knob config as `PFConfig.dense()` — both controllers share
         the dense-swarm optimum, which suggests the gain comes from the
-        underlying force dynamics rather than the attractor type. Tuned via
-        `tools/random_search.py --policy consensus --trials 100` at n=5
-        partial_33; composite score +0.629 vs default +0.533.
+        underlying force dynamics rather than the attractor type.
         """
         return cls(
             attract_gain=2.22,

@@ -1,0 +1,376 @@
+{
+  "controller": "ga",
+  "n_trials": 30,
+  "wall_seconds": 561.4358739852905,
+  "best_value": 0.6453094305110868,
+  "best_params": {
+    "p_mutation": 0.3510383257013727,
+    "p_crossover": 0.15144789935122865,
+    "elite_fraction": 0.39941106126526804,
+    "attract_gain": 3.1629478694085504,
+    "attract_damp_gain": 0.9990415228294238,
+    "drone_repel_gain": 7.484236835802416
+  },
+  "trials": [
+    {
+      "number": 0,
+      "value": 0.5392791039368847,
+      "params": {
+        "p_mutation": 0.2559970653660493,
+        "p_crossover": 0.5728928685254538,
+        "elite_fraction": 0.3061978796339918,
+        "attract_gain": 1.9843966652221854,
+        "attract_damp_gain": 0.07979118876474872,
+        "drone_repel_gain": 1.4321698289111515
+      }
+    },
+    {
+      "number": 1,
+      "value": 0.6076273457623332,
+      "params": {
+        "p_mutation": 0.0819459866925097,
+        "p_crossover": 0.5263968801762143,
+        "elite_fraction": 0.2603902541101231,
+        "attract_gain": 2.5529516046973773,
+        "attract_damp_gain": 0.05318033256270143,
+        "drone_repel_gain": 9.330606024425668
+      }
+    },
+    {
+      "number": 2,
+      "value": 0.5144455979573997,
+      "params": {
+        "p_mutation": 0.5078434524402319,
+        "p_crossover": 0.16678651087305188,
+        "elite_fraction": 0.11363873852248522,
+        "attract_gain": 0.7627364729026304,
+        "attract_damp_gain": 0.12439367209907215,
+        "drone_repel_gain": 3.347776308515933
+      }
+    },
+    {
+      "number": 3,
+      "value": 0.4937222179709037,
+      "params": {
+        "p_mutation": 0.28756976025316366,
+        "p_crossover": 0.21017602710892302,
+        "elite_fraction": 0.26414851315283283,
+        "attract_gain": 0.6893882309676883,
+        "attract_damp_gain": 0.11996621453406359,
+        "drone_repel_gain": 2.324672848950434
+      }
+    },
+    {
+      "number": 4,
+      "value": 0.5826032969881394,
+      "params": {
+        "p_mutation": 0.30083849131936974,
+        "p_crossover": 0.48184677876615745,
+        "elite_fraction": 0.11988582375542592,
+        "attract_gain": 1.6338208828908807,
+        "attract_damp_gain": 0.2949301205216347,
+        "drone_repel_gain": 1.1128853174905728
+      }
+    },
+    {
+      "number": 5,
+      "value": 0.6306141493038085,
+      "params": {
+        "p_mutation": 0.3841496685457911,
+        "p_crossover": 0.14378826802801034,
+        "elite_fraction": 0.07276805754484783,
+        "attract_gain": 4.4448339535094625,
+        "attract_damp_gain": 0.9021655603568132,
+        "drone_repel_gain": 6.432759992849893
+      }
+    },
+    {
+      "number": 6,
+      "value": 0.5388527633273287,
+      "params": {
+        "p_mutation": 0.21753757304535387,
+        "p_crossover": 0.10371966270351113,
+        "elite_fraction": 0.28948155927925495,
+        "attract_gain": 1.377597982475538,
+        "attract_damp_gain": 0.07206848764305199,
+        "drone_repel_gain": 3.1273530367803706
+      }
+    },
+    {
+      "number": 7,
+      "value": 0.5845683022899577,
+      "params": {
+        "p_mutation": 0.06891368661337012,
+        "p_crossover": 0.5501262211433301,
+        "elite_fraction": 0.14057299356000594,
+        "attract_gain": 2.2987528923660823,
+        "attract_damp_gain": 0.12720830454691837,
+        "drone_repel_gain": 3.3118298880723813
+      }
+    },
+    {
+      "number": 8,
+      "value": 0.6232379104463485,
+      "params": {
+        "p_mutation": 0.35069065363880375,
+        "p_crossover": 0.15166995053903987,
+        "elite_fraction": 0.38935461971759555,
+        "attract_gain": 2.9792217348362584,
+        "attract_damp_gain": 0.8342309693146734,
+        "drone_repel_gain": 7.849235338159358
+      }
+    },
+    {
+      "number": 9,
+      "value": 0.4697479109757691,
+      "params": {
+        "p_mutation": 0.3788449883460968,
+        "p_crossover": 0.5570308292627142,
+        "elite_fraction": 0.08097237571817183,
+        "attract_gain": 0.7851504189403354,
+        "attract_damp_gain": 0.05725482134163319,
+        "drone_repel_gain": 2.1150972021685583
+      }
+    },
+    {
+      "number": 10,
+      "value": 0.628641326779,
+      "params": {
+        "p_mutation": 0.5752585741096561,
+        "p_crossover": 0.3103300268000677,
+        "elite_fraction": 0.17905507045238409,
+        "attract_gain": 4.5093592238056415,
+        "attract_damp_gain": 0.9529026160485108,
+        "drone_repel_gain": 6.058669604321785
+      }
+    },
+    {
+      "number": 11,
+      "value": 0.6018373163401706,
+      "params": {
+        "p_mutation": 0.5901316357336339,
+        "p_crossover": 0.3276069342908716,
+        "elite_fraction": 0.18746679155577525,
+        "attract_gain": 4.97065399770045,
+        "attract_damp_gain": 0.9875032201521765,
+        "drone_repel_gain": 5.810125412375463
+      }
+    },
+    {
+      "number": 12,
+      "value": 0.6165781368167718,
+      "params": {
+        "p_mutation": 0.4633742648756807,
+        "p_crossover": 0.2937877449264315,
+        "elite_fraction": 0.1698805978082148,
+        "attract_gain": 4.626582679775709,
+        "attract_damp_gain": 0.589154348566538,
+        "drone_repel_gain": 5.506165717796819
+      }
+    },
+    {
+      "number": 13,
+      "value": 0.6010384532918337,
+      "params": {
+        "p_mutation": 0.5726923992773972,
+        "p_crossover": 0.39744686839614507,
+        "elite_fraction": 0.07145219889001184,
+        "attract_gain": 3.6477940571867697,
+        "attract_damp_gain": 0.4013066071409431,
+        "drone_repel_gain": 5.703176280151324
+      }
+    },
+    {
+      "number": 14,
+      "value": 0.610059678437675,
+      "params": {
+        "p_mutation": 0.4356394274665681,
+        "p_crossover": 0.06847223671395958,
+        "elite_fraction": 0.20748172706400828,
+        "attract_gain": 3.4323468998645206,
+        "attract_damp_gain": 0.5534966657945593,
+        "drone_repel_gain": 4.579897150621579
+      }
+    },
+    {
+      "number": 15,
+      "value": 0.5474278290615705,
+      "params": {
+        "p_mutation": 0.5191154437160365,
+        "p_crossover": 0.2574695575742345,
+        "elite_fraction": 0.05894232318369011,
+        "attract_gain": 1.1275492828881506,
+        "attract_damp_gain": 0.6593475186534646,
+        "drone_repel_gain": 7.256116090520528
+      }
+    },
+    {
+      "number": 16,
+      "value": 0.6095796078250642,
+      "params": {
+        "p_mutation": 0.17007637340286896,
+        "p_crossover": 0.37641433860210216,
+        "elite_fraction": 0.34894391951459436,
+        "attract_gain": 3.970189496138515,
+        "attract_damp_gain": 0.3893134840772065,
+        "drone_repel_gain": 4.479483394989502
+      }
+    },
+    {
+      "number": 17,
+      "value": 0.6170155056732071,
+      "params": {
+        "p_mutation": 0.4465674334583616,
+        "p_crossover": 0.4347981293047344,
+        "elite_fraction": 0.15613720949887983,
+        "attract_gain": 2.8654551900073177,
+        "attract_damp_gain": 0.20152114024912915,
+        "drone_repel_gain": 9.316866059282873
+      }
+    },
+    {
+      "number": 18,
+      "value": 0.6054000947426882,
+      "params": {
+        "p_mutation": 0.39705308937835476,
+        "p_crossover": 0.2392174919690126,
+        "elite_fraction": 0.2385867307949833,
+        "attract_gain": 1.9394218189592858,
+        "attract_damp_gain": 0.7719232363200148,
+        "drone_repel_gain": 6.974295359575889
+      }
+    },
+    {
+      "number": 19,
+      "value": 0.5566640595551523,
+      "params": {
+        "p_mutation": 0.5421823691771073,
+        "p_crossover": 0.32005628208719494,
+        "elite_fraction": 0.21088494861012053,
+        "attract_gain": 1.004511054714769,
+        "attract_damp_gain": 0.43413430422246563,
+        "drone_repel_gain": 4.126591578265226
+      }
+    },
+    {
+      "number": 20,
+      "value": 0.5999616479050642,
+      "params": {
+        "p_mutation": 0.4899710173338804,
+        "p_crossover": 0.16174621041552018,
+        "elite_fraction": 0.09477290068066027,
+        "attract_gain": 3.918620678106449,
+        "attract_damp_gain": 0.20721926016255748,
+        "drone_repel_gain": 2.479038231605572
+      }
+    },
+    {
+      "number": 21,
+      "value": 0.6453094305110868,
+      "params": {
+        "p_mutation": 0.3510383257013727,
+        "p_crossover": 0.15144789935122865,
+        "elite_fraction": 0.39941106126526804,
+        "attract_gain": 3.1629478694085504,
+        "attract_damp_gain": 0.9990415228294238,
+        "drone_repel_gain": 7.484236835802416
+      }
+    },
+    {
+      "number": 22,
+      "value": 0.6387066499957229,
+      "params": {
+        "p_mutation": 0.39974506734272586,
+        "p_crossover": 0.10611174328623936,
+        "elite_fraction": 0.38983189591319717,
+        "attract_gain": 4.734158340108476,
+        "attract_damp_gain": 0.8811414094997811,
+        "drone_repel_gain": 7.0346020149794155
+      }
+    },
+    {
+      "number": 23,
+      "value": 0.6281922709020377,
+      "params": {
+        "p_mutation": 0.34003654156623847,
+        "p_crossover": 0.09959572912108527,
+        "elite_fraction": 0.3962999152450226,
+        "attract_gain": 3.136662954873903,
+        "attract_damp_gain": 0.6980860071466118,
+        "drone_repel_gain": 8.568844766105583
+      }
+    },
+    {
+      "number": 24,
+      "value": 0.6347236458390957,
+      "params": {
+        "p_mutation": 0.3984869847021827,
+        "p_crossover": 0.06074932542691103,
+        "elite_fraction": 0.36382688212128567,
+        "attract_gain": 4.098981501597437,
+        "attract_damp_gain": 0.5379153647778028,
+        "drone_repel_gain": 6.911807910939549
+      }
+    },
+    {
+      "number": 25,
+      "value": 0.5902577565253733,
+      "params": {
+        "p_mutation": 0.4175046098541762,
+        "p_crossover": 0.05154265956949984,
+        "elite_fraction": 0.3543211872405655,
+        "attract_gain": 2.4941481374846726,
+        "attract_damp_gain": 0.502456273862823,
+        "drone_repel_gain": 4.846827023762211
+      }
+    },
+    {
+      "number": 26,
+      "value": 0.6173014237310831,
+      "params": {
+        "p_mutation": 0.3223572295325443,
+        "p_crossover": 0.10210165601075422,
+        "elite_fraction": 0.35023018022142915,
+        "attract_gain": 3.6981914925782773,
+        "attract_damp_gain": 0.29743699603039847,
+        "drone_repel_gain": 7.5339737563134275
+      }
+    },
+    {
+      "number": 27,
+      "value": 0.6209849269651511,
+      "params": {
+        "p_mutation": 0.17217232358857545,
+        "p_crossover": 0.20310065035329664,
+        "elite_fraction": 0.36971558978381125,
+        "attract_gain": 3.1606896152034882,
+        "attract_damp_gain": 0.6765997448708051,
+        "drone_repel_gain": 9.844104049523171
+      }
+    },
+    {
+      "number": 28,
+      "value": 0.5799699476565264,
+      "params": {
+        "p_mutation": 0.2690495236877132,
+        "p_crossover": 0.11810061303356986,
+        "elite_fraction": 0.31952359832391136,
+        "attract_gain": 2.1072225603373558,
+        "attract_damp_gain": 0.3077175320774016,
+        "drone_repel_gain": 3.7575040407814178
+      }
+    },
+    {
+      "number": 29,
+      "value": 0.5109435681560156,
+      "params": {
+        "p_mutation": 0.2293967844174386,
+        "p_crossover": 0.05367428512670715,
+        "elite_fraction": 0.3298044802453096,
+        "attract_gain": 0.5342041074342758,
+        "attract_damp_gain": 0.48451267318983854,
+        "drone_repel_gain": 1.6423171557355385
+      }
+    }
+  ]
+}
