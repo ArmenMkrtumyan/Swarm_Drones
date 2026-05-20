@@ -9,18 +9,18 @@ calm-vs-worst_case-vs-RL story.
 
 Usage:
     python -m capstone.control.compare_batches \\
-        benchmark_hover_report/calm_baseline_runs/report \\
-        benchmark_hover_report/batch_worst_case \\
+        reports/benchmark_hover_report/calm_baseline_runs/report \\
+        reports/benchmark_hover_report/batch_worst_case \\
         --labels calm worst_case \\
-        --out benchmark_hover_report
+        --out reports/benchmark_hover_report
 
     # Later, with RL:
     python -m capstone.control.compare_batches \\
-        benchmark_hover_report/calm_baseline_runs/report \\
-        benchmark_hover_report/batch_worst_case \\
-        benchmark_hover_report/batch_rl \\
+        reports/benchmark_hover_report/calm_baseline_runs/report \\
+        reports/benchmark_hover_report/batch_worst_case \\
+        reports/benchmark_hover_report/batch_rl \\
         --labels calm worst_case rl \\
-        --out benchmark_hover_report
+        --out reports/benchmark_hover_report
 """
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         help="display label per batch (defaults to dir name)",
     )
     p.add_argument(
-        "--out", type=Path, default=Path("benchmark_hover_report"),
+        "--out", type=Path, default=Path("reports/benchmark_hover_report"),
         help="output dir (writes png/comparison.png + svg/comparison.svg)",
     )
     args = p.parse_args(argv)

@@ -11,7 +11,7 @@ home_locked, first_sitl_packet) copied at the top, then the state and PWM
 samples that fall inside that run's time window.
 
 Usage:
-    python -m capstone.common.split_runs flight_logs/flight_20260505_170533.jsonl
+    python -m capstone.common.split_runs logs/flight_logs/flight_20260505_170533.jsonl
     python -m capstone.common.split_runs flight.jsonl --out runs_dir/
     python -m capstone.common.split_runs flight.jsonl --dry-run
 """

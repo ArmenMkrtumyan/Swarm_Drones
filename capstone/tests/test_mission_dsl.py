@@ -14,6 +14,8 @@ from capstone.missions.dsl import (
     compile_to_mavlink_items,
     load,
     parse,
+    MAV_CMD_CONDITION_YAW,
+    MAV_CMD_NAV_DELAY,
     MAV_CMD_NAV_LAND,
     MAV_CMD_NAV_RETURN_TO_LAUNCH,
     MAV_CMD_NAV_TAKEOFF,
@@ -30,7 +32,7 @@ def _square_yaml() -> dict:
         "name": "square_20m",
         "description": "20 m square at 3 m altitude",
         "takeoff": {"altitude_m": 3.0},
-        "defaults": {"altitude_m": 3.0, "hold_s": 2.0, "accept_radius_m": 1.0},
+        "defaults": {"altitude_m": 3.0, "post_yaw_settle_s": 2.0, "accept_radius_m": 1.0},
         "waypoints": [
             {"north_m": 20, "east_m":  0},
             {"north_m": 20, "east_m": 20},
@@ -48,7 +50,7 @@ def test_parse_minimal_mission():
     assert len(mission.waypoints) == 4
     assert mission.waypoints[0].north_m == 20
     assert mission.waypoints[0].altitude_m == 3.0   # from defaults
-    assert mission.waypoints[0].hold_s == 2.0
+    assert mission.waypoints[0].post_yaw_settle_s == 2.0
     assert mission.return_.type == "rtl"
 
 
@@ -92,18 +94,87 @@ def test_offset_resolves_close_to_home():
 
 
 def test_compile_produces_takeoff_waypoints_rtl():
+    """With post_yaw_settle_s > 0 each WP compiles to 3 items
+    (NAV_WAYPOINT + CONDITION_YAW + NAV_DELAY). 1 takeoff + 4*3 + 1 RTL = 14."""
     mission = parse(_square_yaml())
     items = compile_to_mavlink_items(mission, HOME)
-    # 1 takeoff + 4 waypoints + 1 RTL = 6 items
-    assert len(items) == 6
+    assert len(items) == 14
     assert items[0]["command"] == MAV_CMD_NAV_TAKEOFF
     assert items[0]["z"] == 3.0
+    # Per-WP triple: NAV_WAYPOINT(p1=pre_yaw_stop_s, p2=accept_radius),
+    # CONDITION_YAW, NAV_DELAY(p1=post_yaw_settle_s).
+    for wp_idx in range(4):
+        base = 1 + wp_idx * 3
+        nav, yaw, delay = items[base], items[base + 1], items[base + 2]
+        assert nav["command"] == MAV_CMD_NAV_WAYPOINT
+        assert nav["frame"] == MAV_FRAME_GLOBAL_RELATIVE_ALT
+        assert nav["param1"] == 0.0  # pre_yaw_stop_s default in _square_yaml
+        assert nav["param2"] == 1.0  # accept_radius_m
+        assert yaw["command"] == MAV_CMD_CONDITION_YAW
+        assert 0.0 <= yaw["param1"] < 360.0  # absolute bearing degrees
+        assert delay["command"] == MAV_CMD_NAV_DELAY
+        assert delay["param1"] == 2.0  # post_yaw_settle_s
+    assert items[-1]["command"] == MAV_CMD_NAV_RETURN_TO_LAUNCH
+
+
+def test_pre_yaw_stop_s_flows_to_nav_waypoint_p1():
+    """pre_yaw_stop_s should appear as NAV_WAYPOINT.param1 in the compiled
+    output (and ONLY when post_yaw_settle_s > 0 — fly-through ignores it)."""
+    spec = _square_yaml()
+    spec["defaults"]["pre_yaw_stop_s"] = 1.5
+    items = compile_to_mavlink_items(parse(spec), HOME)
+    for wp_idx in range(4):
+        nav = items[1 + wp_idx * 3]
+        assert nav["command"] == MAV_CMD_NAV_WAYPOINT
+        assert nav["param1"] == 1.5
+
+    # Fly-through (post=0) ignores pre_yaw_stop_s.
+    spec_ft = _square_yaml()
+    spec_ft["defaults"]["pre_yaw_stop_s"] = 1.5
+    spec_ft["defaults"]["post_yaw_settle_s"] = 0.0
+    items_ft = compile_to_mavlink_items(parse(spec_ft), HOME)
+    for wp_idx in range(4):
+        nav = items_ft[1 + wp_idx]   # no triples in fly-through
+        assert nav["command"] == MAV_CMD_NAV_WAYPOINT
+        assert nav["param1"] == 0.0  # ignored
+
+
+def test_compile_flythrough_skips_yaw_and_delay():
+    """post_yaw_settle_s == 0 emits only NAV_WAYPOINT — no CONDITION_YAW or NAV_DELAY."""
+    spec = _square_yaml()
+    spec["defaults"]["post_yaw_settle_s"] = 0.0
+    items = compile_to_mavlink_items(parse(spec), HOME)
+    # 1 takeoff + 4 waypoints + 1 RTL = 6
+    assert len(items) == 6
+    assert items[0]["command"] == MAV_CMD_NAV_TAKEOFF
     for it in items[1:5]:
         assert it["command"] == MAV_CMD_NAV_WAYPOINT
-        assert it["frame"] == MAV_FRAME_GLOBAL_RELATIVE_ALT
-        assert it["param2"] == 1.0  # accept_radius_m
-        assert it["param1"] == 2.0  # hold_s
+        assert it["param1"] == 0.0
     assert items[-1]["command"] == MAV_CMD_NAV_RETURN_TO_LAUNCH
+    assert not any(it["command"] == MAV_CMD_CONDITION_YAW for it in items)
+    assert not any(it["command"] == MAV_CMD_NAV_DELAY for it in items)
+
+
+def test_compile_last_waypoint_yaws_toward_home():
+    """The last WP's CONDITION_YAW target should be the bearing to home
+    (so the drone is pointed at the launchpad before RTL begins)."""
+    mission = parse(_square_yaml())
+    items = compile_to_mavlink_items(mission, HOME)
+    # Last WP triple starts at index 1 + 3*3 = 10. NAV_WAYPOINT at 10,
+    # CONDITION_YAW at 11, NAV_DELAY at 12.
+    last_yaw = items[11]
+    assert last_yaw["command"] == MAV_CMD_CONDITION_YAW
+    # In the square_20m, WP3 is at offset (0, 0) = home itself — bearing is
+    # undefined (atan2(0,0) = 0). Just check the field is a valid bearing.
+    assert 0.0 <= last_yaw["param1"] < 360.0
+    # And confirm with a non-degenerate case: shift WP3 a bit off-home so the
+    # bearing has a meaningful target.
+    spec = _square_yaml()
+    spec["waypoints"][3] = {"north_m": 10, "east_m": 0}  # 10 m north of home
+    items2 = compile_to_mavlink_items(parse(spec), HOME)
+    last_yaw2 = items2[11]
+    # WP3 is 10 m north of home; bearing from WP3 to home is due south = 180 deg.
+    assert abs(last_yaw2["param1"] - 180.0) < 0.5, last_yaw2["param1"]
 
 
 def test_compile_with_land_endpoint():
@@ -143,11 +214,17 @@ def test_missing_required_keys_rejected():
 def test_per_waypoint_overrides_defaults():
     spec = _square_yaml()
     spec["waypoints"][2] = {"north_m": 0, "east_m": 20,
-                            "altitude_m": 5.0, "hold_s": 10.0,
+                            "altitude_m": 5.0, "post_yaw_settle_s": 10.0,
                             "accept_radius_m": 0.5}
     mission = parse(spec)
     items = compile_to_mavlink_items(mission, HOME)
-    third_wp = items[3]   # 0=takeoff, 1=wp0, 2=wp1, 3=wp2
-    assert third_wp["z"] == 5.0
-    assert third_wp["param1"] == 10.0
-    assert third_wp["param2"] == 0.5
+    # Item layout (each WP = 3 items): takeoff + (wp0 nav,yaw,delay) +
+    # (wp1 nav,yaw,delay) + (wp2 nav,yaw,delay) + ...
+    # wp2's NAV_WAYPOINT lives at index 1 + 2*3 = 7; its NAV_DELAY at 9.
+    third_wp_nav = items[7]
+    third_wp_delay = items[9]
+    assert third_wp_nav["command"] == MAV_CMD_NAV_WAYPOINT
+    assert third_wp_nav["z"] == 5.0
+    assert third_wp_nav["param2"] == 0.5      # accept_radius override
+    assert third_wp_delay["command"] == MAV_CMD_NAV_DELAY
+    assert third_wp_delay["param1"] == 10.0   # post_yaw_settle_s override

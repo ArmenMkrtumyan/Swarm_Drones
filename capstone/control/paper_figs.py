@@ -1,7 +1,7 @@
 """Publication-aesthetic versions of the calm-run, worst-run, and cross-batch
 comparison figures.
 
-Produces three PNG figures into `benchmark_hover_report/paper_figs/` ready
+Produces three PNG figures into `reports/benchmark_hover_report/paper_figs/` ready
 for inclusion in a paper:
 
     paper_figs/
@@ -19,11 +19,11 @@ paper's figure folder.
 Usage:
     python -m capstone.control.paper_figs                    # use defaults
     python -m capstone.control.paper_figs \\
-        --calm-log  benchmark_hover_report/calm_baseline_runs/flight_..._CALM5.jsonl \\
-        --worst-log benchmark_hover_report/batch_worst_case/flight_..._WORST3_SUCCESS.jsonl \\
-        --calm-csv  benchmark_hover_report/calm_baseline_runs/report/baseline.csv \\
-        --worst-csv benchmark_hover_report/batch_worst_case/report/baseline.csv \\
-        --out       benchmark_hover_report/paper_figs
+        --calm-log  reports/benchmark_hover_report/calm_baseline_runs/flight_..._CALM5.jsonl \\
+        --worst-log reports/benchmark_hover_report/batch_worst_case/flight_..._WORST3_SUCCESS.jsonl \\
+        --calm-csv  reports/benchmark_hover_report/calm_baseline_runs/report/baseline.csv \\
+        --worst-csv reports/benchmark_hover_report/batch_worst_case/report/baseline.csv \\
+        --out       reports/benchmark_hover_report/paper_figs
 
 Aesthetic decisions (set in `_apply_paper_style`):
   - Computer Modern serif (LaTeX look) for all text
@@ -537,8 +537,8 @@ def _pick_default(dirpath: Path, contains: str) -> Path | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    repo = Path(__file__).resolve().parents[3]
-    bench = repo / "benchmark_hover_report"
+    repo = Path(__file__).resolve().parents[2]   # Swarm_Drones/
+    bench = repo / "reports" / "benchmark_hover_report"
     default_calm_dir  = bench / "calm_baseline_runs"
     default_worst_dir = bench / "batch_worst_case"
 

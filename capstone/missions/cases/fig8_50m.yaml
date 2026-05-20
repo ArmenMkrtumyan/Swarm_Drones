@@ -4,9 +4,11 @@ description: |
 
   Approximated as 8 waypoints around two adjacent loops -- not a smooth
   curve, but tight enough that a multicopter at modest speed (WP_SPD ~5 m/s)
-  traces a rounded figure-eight by sequencing through the points. The
-  hold_s is short so the controller doesn't fully stop at each waypoint;
-  cross-track and altitude error during transitions are what we grade.
+  traces a rounded figure-eight by sequencing through the points. We use
+  post_yaw_settle_s = 0 so the DSL emits a fly-through path (no CONDITION_YAW
+  / NAV_DELAY between WPs) -- the drone keeps moving and ArduPilot's
+  WP_YAW_BEHAVIOR handles transit-time yaw. Cross-track and altitude error
+  during transitions are what we grade.
 
   Gates:
     - max bank angle (roll or pitch) during transit < 35 deg
@@ -18,7 +20,7 @@ takeoff:
 
 defaults:
   altitude_m: 5.0
-  hold_s: 0.5
+  post_yaw_settle_s: 0.0   # fly-through; no yaw stop at waypoints
   accept_radius_m: 1.5
 
 # Two loops sharing a common point at the origin: a north loop centered at

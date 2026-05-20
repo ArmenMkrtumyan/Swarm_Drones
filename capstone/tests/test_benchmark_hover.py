@@ -20,8 +20,8 @@ from capstone.control.benchmark_hover import (
 from capstone.control.metrics import compute_metrics
 
 
-REPO = Path(__file__).resolve().parents[3]   # capstone/ at Swarm_Drones/capstone/, repo root is 3 up
-LOGS = REPO / "flight_logs"
+REPO = Path(__file__).resolve().parents[2]   # Swarm_Drones/ (capstone/tests/<file>.py is 2 levels deep)
+LOGS = REPO / "logs" / "flight_logs"
 
 
 def _find_wind5() -> Path | None:

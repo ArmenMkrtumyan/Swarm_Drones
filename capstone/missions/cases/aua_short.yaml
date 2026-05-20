@@ -16,7 +16,8 @@ takeoff:
 
 defaults:
   altitude_m: 30.0
-  hold_s: 1.0
+  pre_yaw_stop_s: 1.0
+  post_yaw_settle_s: 1.0
   accept_radius_m: 1.0
 
 waypoints:

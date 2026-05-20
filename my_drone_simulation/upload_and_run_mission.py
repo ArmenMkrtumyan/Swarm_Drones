@@ -7,12 +7,12 @@ import time
 
 MASTER = "udpin:localhost:14551"
 
-# Log file location — one JSONL per run, timestamped, under mission_logs/.
+# Log file location — one JSONL per run, timestamped, under logs/mission_logs/.
 # Auto-detect WSL vs Windows so the path works from either.
 if os.path.exists("/mnt/c"):   # running in WSL
-    MISSION_LOG_DIR = "/mnt/c/Users/user1811/Desktop/armen-capstone/mission_logs"
+    MISSION_LOG_DIR = "/mnt/c/Users/user1811/Desktop/armen-capstone/Swarm_Drones/logs/mission_logs"
 else:                           # running in native Windows
-    MISSION_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\mission_logs"
+    MISSION_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\Swarm_Drones\logs\mission_logs"
 
 _LOG_FH = None
 _LOG_T0 = None

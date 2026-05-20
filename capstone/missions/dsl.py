@@ -10,7 +10,8 @@ A mission YAML looks like:
     # Default settings applied to each waypoint (override per-waypoint).
     defaults:
       altitude_m: 3.0
-      hold_s: 2.0
+      pre_yaw_stop_s: 2.0        # brake and stop at WP for this long before yaw
+      post_yaw_settle_s: 2.0     # post-yaw stationary settle. 0 => fly through.
       accept_radius_m: 1.0
 
     waypoints:
@@ -46,6 +47,8 @@ MAV_CMD_NAV_WAYPOINT = 16
 MAV_CMD_NAV_RETURN_TO_LAUNCH = 20
 MAV_CMD_NAV_LAND = 21
 MAV_CMD_NAV_TAKEOFF = 22
+MAV_CMD_NAV_DELAY = 93
+MAV_CMD_CONDITION_YAW = 115
 
 MAV_FRAME_MISSION = 2
 MAV_FRAME_GLOBAL_RELATIVE_ALT = 3
@@ -72,7 +75,8 @@ class TakeoffSpec:
 @dataclass
 class WaypointDefaults:
     altitude_m: float | None = None
-    hold_s: float = 0.0
+    pre_yaw_stop_s: float = 0.0
+    post_yaw_settle_s: float = 0.0
     accept_radius_m: float = 1.0
 
 
@@ -80,9 +84,30 @@ class WaypointDefaults:
 class Waypoint:
     """A single waypoint. Specifies position EITHER as (lat, lon) OR as
     (north_m, east_m) offsets from home, but not both.
+
+    Stop-and-yaw behavior is controlled by two fields:
+      pre_yaw_stop_s  -- time to brake and hold at the WP BEFORE the yaw.
+                         Implemented via NAV_WAYPOINT.p1 (loiter time).
+                         Without this, the drone arrives at the WP with
+                         residual transit velocity and CONDITION_YAW runs
+                         while it's still drifting, producing an off-course
+                         path on the next leg.
+      post_yaw_settle_s -- additional stationary settle AFTER the yaw, via
+                         NAV_DELAY. Lets pos_control damp residual
+                         oscillation before the next leg begins.
+
+    Compile behavior:
+      post_yaw_settle_s == 0  => fly-through. Single NAV_WAYPOINT(p1=0).
+                                 pre_yaw_stop_s is IGNORED in this mode
+                                 (no stop, no yaw, no settle).
+      post_yaw_settle_s  > 0  => stop-yaw-settle triple:
+                                 NAV_WAYPOINT(p1=pre_yaw_stop_s)
+                                 + CONDITION_YAW(toward next WP or home)
+                                 + NAV_DELAY(post_yaw_settle_s)
     """
     altitude_m: float
-    hold_s: float = 0.0
+    pre_yaw_stop_s: float = 0.0
+    post_yaw_settle_s: float = 0.0
     accept_radius_m: float = 1.0
     lat: float | None = None
     lon: float | None = None
@@ -137,11 +162,24 @@ def _apply_defaults(wp_data: dict, defaults: WaypointDefaults) -> dict:
     """Fill in missing waypoint fields from the mission's defaults block."""
     out = dict(wp_data)
     out.setdefault("altitude_m", defaults.altitude_m)
-    out.setdefault("hold_s", defaults.hold_s)
+    out.setdefault("pre_yaw_stop_s", defaults.pre_yaw_stop_s)
+    out.setdefault("post_yaw_settle_s", defaults.post_yaw_settle_s)
     out.setdefault("accept_radius_m", defaults.accept_radius_m)
     if out["altitude_m"] is None:
         raise ValueError("waypoint missing altitude_m and no defaults.altitude_m set")
     return out
+
+
+def _bearing_deg(curr_lat: float, curr_lon: float,
+                 next_lat: float, next_lon: float,
+                 ref_lat: float) -> float:
+    """Compass bearing from (curr_lat,curr_lon) to (next_lat,next_lon) in
+    degrees, North=0, East=90, in [0, 360). Flat-earth approximation around
+    ref_lat — fine for the few-hundred-meter missions this DSL targets."""
+    cos_lat = math.cos(math.radians(ref_lat))
+    delta_n = (next_lat - curr_lat) * _M_PER_DEG_LAT
+    delta_e = (next_lon - curr_lon) * _M_PER_DEG_LAT * cos_lat
+    return math.degrees(math.atan2(delta_e, delta_n)) % 360.0
 
 
 def parse(data: dict) -> Mission:
@@ -201,7 +239,27 @@ def _item(seq: int, command: int, frame: int,
 
 
 def compile_to_mavlink_items(mission: Mission, home: HomePosition) -> list[dict]:
-    """Return a sequence of mission items: [TAKEOFF, ...waypoints, RTL/LAND]."""
+    """Return a sequence of mission items: [TAKEOFF, ...waypoints (with optional
+    yaw+settle), RTL/LAND].
+
+    For each waypoint with post_yaw_settle_s > 0, three items are emitted:
+        NAV_WAYPOINT(p1=pre_yaw_stop_s)  — fly to WP, brake, hold for the
+                                            pre-yaw stop duration. The hold
+                                            forces ArduCopter to decelerate
+                                            to zero before advancing.
+        CONDITION_YAW(target=bearing)    — yaw in place toward next WP
+                                            (or home for the last WP)
+        NAV_DELAY(p1=post_yaw_settle_s)  — additional settle after yaw
+
+    This decouples yaw from transit, so the drone arrives at a WP, stops,
+    finishes its yaw while stationary, settles, and only then begins moving
+    toward the next leg — instead of yawing and translating concurrently
+    (which is what WP_YAW_BEHAVIOR=1 produces by default).
+
+    Waypoints with post_yaw_settle_s == 0 emit only NAV_WAYPOINT(p1=0) and
+    preserve fly-through semantics (useful for figure-8 / survey missions);
+    pre_yaw_stop_s is ignored in that mode.
+    """
     items: list[dict] = []
 
     # 0: takeoff (lat/lon ignored by ArduCopter on takeoff item).
@@ -212,16 +270,48 @@ def compile_to_mavlink_items(mission: Mission, home: HomePosition) -> list[dict]
         x=home.lat, y=home.lon, z=mission.takeoff.altitude_m,
     ))
 
-    # 1..N: waypoints.
-    for i, wp in enumerate(mission.waypoints, start=1):
+    n_wp = len(mission.waypoints)
+    for wp_idx, wp in enumerate(mission.waypoints):
         lat, lon = wp.resolve(home)
+
+        # NAV_WAYPOINT.p1 = pre_yaw_stop_s only when stop-yaw-settle is active.
+        # When post_yaw_settle_s == 0 (fly-through), p1 is 0 so the drone
+        # passes through without stopping.
+        nav_p1 = wp.pre_yaw_stop_s if wp.post_yaw_settle_s > 0.0 else 0.0
         items.append(_item(
-            seq=i,
+            seq=len(items),
             command=MAV_CMD_NAV_WAYPOINT,
             frame=MAV_FRAME_GLOBAL_RELATIVE_ALT,
-            p1=wp.hold_s,
+            p1=nav_p1,
             p2=wp.accept_radius_m,
             x=lat, y=lon, z=wp.altitude_m,
+        ))
+
+        if wp.post_yaw_settle_s <= 0.0:
+            continue
+
+        # Target heading: bearing to next WP, or home for the final WP.
+        if wp_idx + 1 < n_wp:
+            next_lat, next_lon = mission.waypoints[wp_idx + 1].resolve(home)
+        else:
+            next_lat, next_lon = home.lat, home.lon
+        target_yaw_deg = _bearing_deg(lat, lon, next_lat, next_lon, home.lat)
+
+        items.append(_item(
+            seq=len(items),
+            command=MAV_CMD_CONDITION_YAW,
+            frame=MAV_FRAME_MISSION,
+            p1=target_yaw_deg,
+            p2=0.0,   # angular speed: 0 => autopilot default
+            p3=0.0,   # direction: 0 => shortest path
+            p4=0.0,   # absolute angle (not relative)
+        ))
+        items.append(_item(
+            seq=len(items),
+            command=MAV_CMD_NAV_DELAY,
+            frame=MAV_FRAME_MISSION,
+            p1=wp.post_yaw_settle_s,
+            p2=-1.0, p3=-1.0, p4=-1.0,   # time-of-day fields unused
         ))
 
     # Final: RTL or LAND.

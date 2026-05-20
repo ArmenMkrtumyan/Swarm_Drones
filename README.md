@@ -7,8 +7,28 @@ Bridge between Isaac Sim and ArduPilot SITL for the F450 capstone, plus the `cap
 - `my_drone_simulation/` — Isaac↔SITL bridge (`Nvidia_SITL_connecter.py`), takeoff and mission scripts.
 - `capstone/` — stage gates, disturbance profiles, metrics, mission runner.
 - `sitl_params/` — ArduCopter SITL param files; `sitl_params_test.parm` is the active one loaded by the WSL launch command.
-- `scene/` — drone USDs.
+- `scene/` — drone USDs and AUA world (`AUA_world_500m.usd` + `aua_bake/`). See **Heavy assets** below for the textures download.
 - `optimization/` — tuning experiments.
+
+## Heavy assets (not in git)
+
+Some assets are too large to track in git. They live in the shared Google Drive folder:
+
+**https://drive.google.com/drive/folders/1YoCJpJJ7Y0DpSdNDwIO5RWdEnv13tBaf?usp=drive_link**
+
+Required for a textured AUA world (otherwise terrain renders untextured but everything still loads and physics/RL/SITL work fine):
+
+- `textures/` — 1.3 GB, 13,341 PNGs. Place at `scene/aua_bake/textures/` so `aua_terrain_500m_active.usd` can resolve `tex_NNNNN.png` references.
+
+The same Drive folder also archives optional/historical backup files (`scene/_backup/` is gitignored) — alternative drone USD packages, the source URDF, the heavy/2 km terrain variants if they get re-uploaded, and Isaac Sim debug snapshots. Pull only what you need.
+
+## How the USDs were built
+
+The world and drone USDs in `scene/` were not authored by hand. They came out of three different pipelines, each of which is archived under `scene/_backup/aua_bake_source/` for the bake scripts or `scene/_backup/` for the drone source. None of these need to run at simulation time — the baked USDs are self-contained.
+
+- **AUA terrain (`aua_terrain_500m_active.usd`).** Cesium 3D Tiles were crawled from a Google Photorealistic Tileset around the AUA campus (`crawl.py` + `root.json` walk the tileset and pull the `.glb` leaves). The tiles were imported into **Blender**, materials baked to per-mesh PNG textures, and the result exported to USD via `bake_to_usd.py` (which deduplicates textures into the shared `textures/` folder). `subset_from_2km.py` then carves out the 500 m slim variant from the larger 2 km bake — the active terrain is a subset of the 13,341-mesh original.
+- **AUA buildings (`aua_buildings_500m.usd`).** Building footprints come from **OpenStreetMap** polygons (`fetch_osm_buildings.py`, radii 500 m / 2 km, with `manual_buildings.json` patching missing structures). Heights are sampled from **SRTM** elevation rasters and reconciled against the Cesium terrain (the empirical +18.76 m geoid-vs-ellipsoid lift is documented in `aua_scene_500m.usda`'s header). Footprints were extruded in Blender and exported as USD by `bake_buildings.py`.
+- **Hawks Work F450 drone (`scene/hawks_work_f450_basefile/`).** Source artifact is `scene/_backup/hawks_work_f450_basefile.urdf`. It was imported through Isaac Sim's URDF importer extension, which produces the `_base.usd` / `_physics.usd` / `_robot.usd` / `_sensor.usd` package structure visible under `scene/hawks_work_f450_basefile/configuration/`. Post-import edits (rescale, motor reorientation, arched legs) are recorded in the `.bak_*` snapshots next to `_base_F450scaled.usd` and reproduced by `tools/replace_legs_with_arches.py`.
 
 ## Motor convention (ArduPilot QuadX)
 

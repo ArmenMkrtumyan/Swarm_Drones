@@ -1,0 +1,120 @@
+# compare_v1 — PPO + TD3 retrain with expanded action set + normalized reward.
+#
+# Changes vs compare_v0:
+#   - Action space grows from 8 → 12 gains: adds the PSC altitude stack
+#     (PSC_POSZ_P, PSC_VELZ_P, PSC_VELZ_I, PSC_VELZ_D). The atc_psc_mirror
+#     already uses these gains in stage 1; v0 just didn't expose them to the
+#     policy.
+#   - Reward weights are normalized by calm-batch gate thresholds, so every
+#     gated metric contributes the same magnitude when it's at its gate.
+#     This makes the policy optimize the same quantity the deployment gate scores.
+#   - base_step_reward bumped to 5.0 to keep mean episode return positive
+#     under the larger normalized cost magnitudes.
+#   - Survival bonus and crash penalty scaled to match.
+
+env:
+  num_envs: 8
+  device: "cpu"
+  hover_alt_m: 3.0
+  max_episode_steps: 120
+  inner_steps_per_action: 200
+  physics_dt: 0.0025
+  crash_alt_m: 0.5
+  crash_pos_xy_m: 50.0
+  crash_attitude_deg: 60.0
+
+  # Reward scaling — see normalized weights below.
+  survival_bonus: 50.0
+  crash_penalty: -50.0
+  reward_scale: 1.0
+  base_step_reward: 5.0
+
+  # Normalized weights — each = 1 / (calm_gate threshold).
+  # Cost contribution of each term is 1.0 when the metric is exactly at its gate.
+  w_alt_err:  12.5    # 1 / 0.08  (gate: alt_std_m < 0.08)
+  w_pos_err:  0.0     # action set still doesn't include horizontal PSC; keep at 0 until v2
+  w_vel:      0.10
+  w_attitude: 286.0   # ≈ 1 / 0.0035 (avg of roll<0.003 and pitch<0.004 gates)
+  w_gyro:     111.0   # 1 / 0.009 (gate: gyro_rms < 0.009)
+  w_action_smooth: 0.01
+
+# Domain randomization — same as v0.
+dr:
+  mass:                     { lo: 1.10, hi: 1.60 }
+  motor_tau:                { lo: 0.030, hi: 0.080 }
+  K_thrust_jitter:          { lo: 0.85, hi: 1.15 }
+  K_drag:                   { lo: 0.020, hi: 0.040 }
+  gyro_bias:                { lo: -0.03, hi: 0.03 }
+  gyro_noise_sigma:         { lo: 0.0,  hi: 0.10 }
+  init_attitude_deg:        { lo: -20.0, hi: 20.0 }
+  init_alt_offset:          { lo: -0.5, hi: 0.5 }
+  init_xy_offset:           { lo: -0.5, hi: 0.5 }
+  initial_gain_mistune_pct: { lo: -0.60, hi: 0.60 }
+
+# Action set: 8 attitude + 4 altitude PSC = 12 gains.
+gains:
+  # --- attitude (same 8 gains as v0) ---
+  - { name: ATC_ANG_RLL_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_ANG_PIT_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_RAT_RLL_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+  - { name: ATC_RAT_PIT_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+  # --- new: altitude PSC stack ---
+  - { name: PSC_POSZ_P,    baseline: 1.0,    lo: 0.3,  hi: 3.0,   delta_per_step: 0.05 }
+  - { name: PSC_VELZ_P,    baseline: 5.0,    lo: 2.0,  hi: 10.0,  delta_per_step: 0.20 }
+  - { name: PSC_VELZ_I,    baseline: 2.0,    lo: 0.5,  hi: 5.0,   delta_per_step: 0.10 }
+  - { name: PSC_VELZ_D,    baseline: 0.0,    lo: 0.0,  hi: 0.5,   delta_per_step: 0.01 }
+
+# Shared off-policy hyperparams. Identical to v0 except where noted.
+shared:
+  # Reduced from 200k (comp-v0 budget) — v0 curves show TD3 plateaus by ~50k
+  # and PPO is essentially flat. 100k gives 2× margin past v0 convergence and
+  # halves wall-clock so v1 finishes inside the SITL benchmark window.
+  total_timesteps: 100000
+  learning_rate: 3.0e-4
+  buffer_size: 200000
+  learning_starts: 10000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: [1, "step"]
+  gradient_steps: 8
+  action_noise_sigma: 0.1
+  policy_kwargs:
+    net_arch: [256, 256]
+  device: "cuda"
+
+td3:
+  target_policy_noise: 0.2
+  target_noise_clip: 0.5
+  policy_delay: 2
+
+ppo:
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  device: "cpu"
+
+# SAC (Soft Actor-Critic, off-policy max-entropy): twin Q-critics like TD3 +
+# automatic entropy temperature tuning. ent_coef='auto' lets SAC learn its
+# own exploration magnitude; target_entropy='auto' uses -action_dim by default.
+# No action_noise needed — entropy regularization provides exploration.
+sac:
+  ent_coef: "auto"
+  target_update_interval: 1
+  target_entropy: "auto"
+
+seeds: [0, 1, 2, 3, 4]
+algos: ["PPO", "TD3", "SAC"]   # DDPG dropped — comp-v0 confirmed it collapses on this env
+
+log_root: "logs/tb_logs/compare_v1"
+checkpoint_root: "logs/checkpoints/compare_v1"
+eval_episodes: 10

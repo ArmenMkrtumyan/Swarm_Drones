@@ -3,3 +3,8 @@ optimization/.optim_env
 optimization/outputs/
 optimization/CLAUDE.md
 **/__pycache__/
+.pytest_cache/
+logs/
+reports/
+.claude
+scene/_backup

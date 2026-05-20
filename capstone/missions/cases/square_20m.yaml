@@ -15,7 +15,8 @@ takeoff:
 
 defaults:
   altitude_m: 3.0
-  hold_s: 1.0           # hold position 1 s at each corner
+  pre_yaw_stop_s: 1.0      # brake to stop before yaw
+  post_yaw_settle_s: 1.0   # yaw toward next WP in place, then 1 s settle
   accept_radius_m: 1.0
 
 waypoints:

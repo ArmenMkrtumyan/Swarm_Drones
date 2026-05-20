@@ -125,13 +125,33 @@ class MassDrop:
     `altitude_m >= hover_alt_threshold_m` (single threshold, no velocity gate).
     Once dropped, `current_payload_kg()` returns 0 forever — the bridge will
     naturally stop applying any extra weight.
+
+    Randomization: set `random_drop_window_s = (lo, hi)` to make
+    `drop_after_hover_s` re-sampled from `Uniform(lo, hi)` at every reset.
+    Used by mission profiles where we want the drop to land somewhere inside a
+    known leg without the policy memorising the exact time.
     """
     payload_kg: float = 0.300
     drop_after_hover_s: float = 5.0
     hover_alt_threshold_m: float = 1.5
+    random_drop_window_s: tuple[float, float] | None = None
+    seed: int | None = None
     _hover_elapsed_s: float = 0.0
     _dropped: bool = False
     _drop_sim_time_s: float | None = None
+    _rng_obj: np.random.Generator | None = None
+
+    def __post_init__(self):
+        self._rng_obj = _rng(self.seed)
+        self._maybe_sample_drop_time()
+
+    def _maybe_sample_drop_time(self) -> None:
+        if self.random_drop_window_s is None:
+            return
+        lo, hi = self.random_drop_window_s
+        if hi <= lo:
+            raise ValueError(f"random_drop_window_s must have hi > lo, got {self.random_drop_window_s}")
+        self.drop_after_hover_s = float(self._rng_obj.uniform(lo, hi))
 
     def update(self, dt: float, altitude_m: float) -> bool:
         """Advance internal state. Returns True iff the drop fires this tick."""
@@ -153,11 +173,13 @@ class MassDrop:
 
         Called by the bridge after a disarm so the next takeoff in the same
         Isaac session starts fresh -- enables N-run batches without
-        re-importing the bridge between every run.
+        re-importing the bridge between every run. Also re-samples the drop
+        time if `random_drop_window_s` is set.
         """
         self._hover_elapsed_s = 0.0
         self._dropped = False
         self._drop_sim_time_s = None
+        self._maybe_sample_drop_time()
 
 
 # -----------------------------------------------------------------------------
@@ -300,6 +322,85 @@ def imu_noise_default(*, seed: int | None = None) -> DisturbanceProfile:
     return DisturbanceProfile(name="imu_noise", imu=imu)
 
 
+def wind_lateral_random_dir(
+    peak_mps: float = 5.0,
+    *,
+    seed: int | None = None,
+) -> DisturbanceProfile:
+    """Lateral wind whose horizontal direction is sampled uniformly from the
+    four cardinal axes {+X, -X, +Y, -Y} at construction time.
+
+    Each call returns a single direction — the wind doesn't rotate during the
+    flight. For "random per run" behaviour, the caller passes a fresh seed (or
+    no seed for entropy-based randomness) when re-creating the profile.
+    """
+    rng = _rng(seed)
+    direction = rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+    dx, dy = float(direction[0]), float(direction[1])
+    sigma = peak_mps / 3.0
+    wind = WindOU(
+        sigma_mps=sigma,
+        tau_s=1.0,
+        mean_world_mps=(sigma * dx, sigma * dy, 0.0),
+        seed=seed,
+    )
+    label = {(+1, 0): "px", (-1, 0): "nx", (0, +1): "py", (0, -1): "ny"}[(int(dx), int(dy))]
+    return DisturbanceProfile(name=f"wind{int(peak_mps)}_rand_{label}", wind=wind)
+
+
+def mission_worst_case(
+    payload_kg: float = 0.400,
+    random_drop_window_s: tuple[float, float] = (38.0, 58.0),
+    wind_peak_mps: float = 5.0,
+    *,
+    seed: int | None = None,
+) -> DisturbanceProfile:
+    """Mission-scale disturbance: random-direction wind + random-time mass drop +
+    IMU noise. Designed for the 100 m square mission benchmark, where the drop
+    window should land inside leg 2 (between 20 s after WP1 and arrival at WP3).
+
+    Default window of (38, 58) seconds after the drone first reaches
+    `hover_alt_threshold_m` corresponds to the [20 s after WP1, WP3 reached]
+    interval for a 100 m square at WP_SPD = 8 m/s (estimated WP1 reach ≈ 18 s
+    post-airborne, WP3 reach ≈ 58 s post-airborne). Tune `random_drop_window_s`
+    for other mission geometries or speeds.
+
+    Wind direction is picked once per construction (one of ±X, ±Y); pass a
+    new seed each run for run-to-run randomisation.
+    """
+    rng = _rng(seed)
+    direction = rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+    dx, dy = float(direction[0]), float(direction[1])
+    sigma = wind_peak_mps / 3.0
+    wind = WindOU(
+        sigma_mps=sigma,
+        tau_s=1.0,
+        mean_world_mps=(sigma * dx, sigma * dy, 0.0),
+        seed=seed,
+    )
+    imu = ImuNoise(
+        gyro_white_sigma=0.02,
+        accel_white_sigma=0.10,
+        gyro_bias_walk_sigma=0.001,
+        accel_bias_walk_sigma=0.005,
+        seed=None if seed is None else seed + 1,
+    )
+    mass_drop = MassDrop(
+        payload_kg=payload_kg,
+        drop_after_hover_s=0.0,    # placeholder; overwritten by random sample
+        hover_alt_threshold_m=1.5,
+        random_drop_window_s=random_drop_window_s,
+        seed=None if seed is None else seed + 2,
+    )
+    label = {(+1, 0): "px", (-1, 0): "nx", (0, +1): "py", (0, -1): "ny"}[(int(dx), int(dy))]
+    return DisturbanceProfile(
+        name=f"mission_worst_case_{label}",
+        wind=wind,
+        imu=imu,
+        mass_drop=mass_drop,
+    )
+
+
 def worst_case(*, seed: int | None = None) -> DisturbanceProfile:
     """All three currently-active disturbance kinds applied simultaneously.
 
@@ -343,10 +444,12 @@ PROFILE_FACTORIES: dict[str, Callable[..., DisturbanceProfile]] = {
     "calm": calm,
     "mass_drop_300g": lambda **k: mass_drop_payload(0.300, 5.0, **k),
     "wind5": lambda **k: wind_lateral(5.0, **k),
+    "wind5_rand": lambda **k: wind_lateral_random_dir(5.0, **k),
     "wind_up3": lambda **k: wind_vertical(3.0, direction="up", **k),
     "wind_down3": lambda **k: wind_vertical(3.0, direction="down", **k),
     "imu_noise": imu_noise_default,
     "worst_case": worst_case,
+    "mission_worst_case": mission_worst_case,
 }
 
 

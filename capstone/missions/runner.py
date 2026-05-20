@@ -8,7 +8,7 @@ case file can be flown end-to-end without editing global constants:
 
 The MAVLink dance ArduCopter 4.8-dev requires (cannot arm in AUTO; takeoff in
 GUIDED; jump mission past takeoff; switch to AUTO mid-flight) is reproduced
-here. A timestamped JSONL log is written to `mission_logs/`.
+here. A timestamped JSONL log is written to `logs/mission_logs/`.
 
 Default home (40.192°N, 44.50446°E -- the AUA reference point used in
 mission_creator.py) is configurable. Mission waypoints are interpreted as
@@ -25,6 +25,8 @@ import sys
 import time
 from pathlib import Path
 
+import math
+
 from capstone.missions.dsl import (
     HomePosition,
     Mission,
@@ -33,10 +35,240 @@ from capstone.missions.dsl import (
 )
 
 
+_M_PER_DEG_LAT = 111_111.0
+
+
+_WIND_LABEL_TO_DIR = {
+    # Maps the suffix in `mission_worst_case_<suffix>` → (north_unit, east_unit)
+    # under the bridge's NED world frame (X=N, Y=E).
+    "px": (+1.0,  0.0),
+    "nx": (-1.0,  0.0),
+    "py":  (0.0, +1.0),
+    "ny":  (0.0, -1.0),
+}
+
+
+def _extract_bridge_overlay(bridge_log: Path) -> dict:
+    """Read a bridge flight_*.jsonl and pull out:
+      - wind_label:  'px'/'nx'/'py'/'ny' or None
+      - drop_t:      bridge sim_time when mass_drop_event fired (s) or None
+      - drop_pos_ne: (north_m, east_m) of drone at drop time, or None
+      - payload_kg:  the drop payload mass (kg) or None
+    """
+    wind_label: str | None = None
+    drop_t: float | None = None
+    payload_kg: float | None = None
+    state_samples: list[tuple[float, float, float]] = []  # (t, n, e)
+
+    with bridge_log.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            ev = d.get("event")
+            if wind_label is None and ev == "capstone_disturbance_active":
+                profile = str(d.get("profile", ""))
+                if len(profile) >= 2 and profile[-3] == "_" and profile[-2:] in _WIND_LABEL_TO_DIR:
+                    wind_label = profile[-2:]
+            if drop_t is None and ev == "mass_drop_event":
+                drop_t = float(d.get("t", 0.0))
+                payload_kg = float(d.get("payload_kg", 0.0))
+            if d.get("src") == "isaac->sitl" and "pos_ned" in d:
+                pn = d["pos_ned"]
+                state_samples.append((float(d["t"]), float(pn[0]), float(pn[1])))
+
+    drop_pos_ne = None
+    if drop_t is not None and state_samples:
+        closest = min(state_samples, key=lambda s: abs(s[0] - drop_t))
+        drop_pos_ne = (closest[1], closest[2])
+
+    return {
+        "wind_label": wind_label,
+        "drop_t": drop_t,
+        "drop_pos_ne": drop_pos_ne,
+        "payload_kg": payload_kg,
+    }
+
+
+def _find_matching_bridge_log(mission_log: Path,
+                              window_s: float = 600.0) -> Path | None:
+    """Heuristic: find the bridge flight_*.jsonl that pairs with this mission
+    log. Searches the SAME directory for any `flight_*.jsonl` whose mtime is
+    within ``window_s`` of the mission log's mtime, returns the closest. The
+    user-convention is to move the bridge's log into the mission log dir
+    alongside the mission JSONL after each run — when they do, pairing works.
+    Returns None if no candidate is found."""
+    try:
+        mtime = mission_log.stat().st_mtime
+    except OSError:
+        return None
+    best = None
+    best_dt = window_s
+    for cand in mission_log.parent.glob("flight_*.jsonl"):
+        try:
+            dt = abs(cand.stat().st_mtime - mtime)
+        except OSError:
+            continue
+        if dt < best_dt:
+            best_dt = dt
+            best = cand
+    return best
+
+
+def plot_run_xy(log_path: Path, mission: Mission, home: HomePosition,
+                out_dir: Path, *, bridge_log: Path | None = None) -> Path | None:
+    """Generate a 2D XY trajectory PNG from a single mission JSONL log.
+
+    Parses GLOBAL_POSITION_INT entries, converts to local NED relative to
+    home, and plots the trajectory together with WP markers + the planned
+    legs. Output: ``<out_dir>/<log_stem>.png``. Returns the PNG path on
+    success, None if matplotlib is unavailable or the log has no positions.
+
+    If `bridge_log` is provided (the matching `flight_*.jsonl`), the plot is
+    annotated with the run's wind direction (corner arrow) and the
+    mass-drop position (orange diamond). Bridge overlay is best-effort —
+    missing log or missing events are silently skipped.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # headless
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"[plot] matplotlib unavailable ({e!r}); skipping XY plot")
+        return None
+
+    cos_lat = math.cos(math.radians(home.lat))
+    norths: list[float] = []
+    easts: list[float] = []
+    n_dropped = 0
+    with log_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("src") != "mavlink":
+                continue
+            if d.get("mavpackettype") != "GLOBAL_POSITION_INT":
+                continue
+            lat_i = int(d["lat"])
+            lon_i = int(d["lon"])
+            # ArduPilot occasionally emits GLOBAL_POSITION_INT with lat=0,
+            # lon=0 — typically post-disarm or during EKF-init transients.
+            # These decode to a point ~4500 km from home and blow up the
+            # auto-axis of the XY plot. Drop them.
+            if lat_i == 0 and lon_i == 0:
+                n_dropped += 1
+                continue
+            lat = lat_i / 1e7
+            lon = lon_i / 1e7
+            n = (lat - home.lat) * _M_PER_DEG_LAT
+            e = (lon - home.lon) * _M_PER_DEG_LAT * cos_lat
+            # Defensive: drop any sample > 10 km from home — way beyond any
+            # mission we'd run, almost certainly a glitch.
+            if abs(n) > 10_000.0 or abs(e) > 10_000.0:
+                n_dropped += 1
+                continue
+            norths.append(n)
+            easts.append(e)
+    if n_dropped:
+        print(f"[plot] dropped {n_dropped} invalid GLOBAL_POSITION_INT samples "
+              f"(lat=0/lon=0 or > 10 km from home)")
+
+    if not norths:
+        print(f"[plot] no GLOBAL_POSITION_INT entries in {log_path.name}; skipping")
+        return None
+
+    # Resolve planned WPs in (north, east).
+    wp_n: list[float] = []
+    wp_e: list[float] = []
+    for wp in mission.waypoints:
+        if wp.lat is not None and wp.lon is not None:
+            n = (wp.lat - home.lat) * _M_PER_DEG_LAT
+            e = (wp.lon - home.lon) * _M_PER_DEG_LAT * cos_lat
+        else:
+            n = float(wp.north_m or 0.0)
+            e = float(wp.east_m or 0.0)
+        wp_n.append(n)
+        wp_e.append(e)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(7, 7))
+    # Plot east on x, north on y so up = north (standard map orientation).
+    ax.plot(easts, norths, "-", color="#1f77b4", lw=1.4, label="trajectory")
+    ax.plot([0] + wp_e, [0] + wp_n, "--", color="#888888", lw=0.8, alpha=0.7,
+            label="planned path")
+    ax.scatter(easts[0], norths[0], marker="o", color="green", s=70,
+               zorder=5, label="start")
+    ax.scatter(easts[-1], norths[-1], marker="s", color="red", s=70,
+               zorder=5, label="end")
+    ax.scatter([0], [0], marker="*", color="black", s=120, zorder=5,
+               label="home")
+    for i, (n, e) in enumerate(zip(wp_n, wp_e), start=1):
+        ax.scatter(e, n, marker="x", color="black", s=80, zorder=4)
+        ax.annotate(f"WP{i}", (e, n), xytext=(6, 6), textcoords="offset points",
+                    fontsize=10)
+
+    # Optional bridge-log overlay: wind direction arrow + drop point marker.
+    title_suffix = ""
+    if bridge_log is not None and bridge_log.exists():
+        ov = _extract_bridge_overlay(bridge_log)
+        if ov["drop_pos_ne"] is not None:
+            drop_n, drop_e = ov["drop_pos_ne"]
+            ax.scatter([drop_e], [drop_n], marker="D", color="#ff7f0e",
+                       s=110, edgecolor="black", linewidth=1.0, zorder=6,
+                       label=f"mass drop ({ov['payload_kg']:.2f} kg)")
+            ax.annotate(f"drop t={ov['drop_t']:.0f}s",
+                        (drop_e, drop_n), xytext=(8, -12),
+                        textcoords="offset points", fontsize=9,
+                        color="#ff7f0e")
+        if ov["wind_label"] is not None:
+            title_suffix = f"  wind: {ov['wind_label']}"
+            # Wind arrow in upper-left corner (axes fraction coords).
+            dn, de = _WIND_LABEL_TO_DIR[ov["wind_label"]]
+            # arrow length in axes-fraction units
+            L = 0.10
+            x0, y0 = 0.10, 0.90  # tail
+            ax.annotate(
+                "", xy=(x0 + L * de, y0 + L * dn), xytext=(x0, y0),
+                xycoords="axes fraction",
+                arrowprops=dict(arrowstyle="->", color="#2ca02c", lw=2),
+            )
+            ax.text(x0, y0 + 0.04,
+                    f"wind {ov['wind_label']} (~5 m/s peak)",
+                    transform=ax.transAxes, color="#2ca02c", fontsize=9)
+
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("East (m)")
+    ax.set_ylabel("North (m)")
+    ax.set_title(f"{mission.name} — {log_path.stem}{title_suffix}")
+    ax.legend(loc="lower right", fontsize=9)
+    fig.tight_layout()
+
+    out_png = out_dir / f"{log_path.stem}.png"
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+    return out_png
+
+
 DEFAULT_HOME_LAT = 40.192
 DEFAULT_HOME_LON = 44.50446
 DEFAULT_MASTER = "udpin:localhost:14551"
 DEFAULT_MONITOR_TIMEOUT_S = 900.0  # 15 min wall ~= 6 min sim at Isaac 40% realtime
+
+
+# Auto-route logs by mission name. Keys match the `name:` field of each mission
+# YAML in capstone/missions/cases/. Values are subdirectories under
+# `logs/mission_logs/`. For RL-deployed runs, override via `--log-subdir rl_*`.
+DEFAULT_LOG_SUBDIRS: dict[str, str] = {
+    "square_100m": "baseline_square100",
+    "square_20m":  "baseline_square20",
+    "aua_short":   "baseline_pid_aua",
+    "fig8_50m":    "baseline_fig8_50m",
+    "survey_3x3":  "baseline_survey_3x3",
+}
 
 
 # -----------------------------------------------------------------------------
@@ -110,16 +342,38 @@ def request_streams(master, mavutil) -> None:
 
 
 def drain_messages(master, logger: MissionLogger, duration: float = 3.0,
-                   verbose: bool = True) -> None:
+                   verbose: bool = True, *, exit_on_disarm: bool = False) -> None:
+    """Read MAVLink messages for up to `duration` seconds, logging each.
+
+    When `exit_on_disarm=True`, returns early as soon as the vehicle reports
+    `armed -> disarmed` via HEARTBEAT (must have observed an armed heartbeat
+    first, so we don't trip on the disarmed steady-state before takeoff).
+    The post-mission monitor uses this so the runner exits cleanly after
+    LAND auto-disarm — otherwise it would keep logging
+    `MISSION_CURRENT: seq=0` heartbeats until the timeout.
+    """
+    from pymavlink import mavutil
     end = time.time() + duration
+    saw_armed = False
     while time.time() < end:
         msg = master.recv_match(blocking=True, timeout=0.5)
         if not msg:
             continue
         logger.mavlink(msg)
+        mtype = msg.get_type()
+
+        if exit_on_disarm and mtype == "HEARTBEAT":
+            armed_now = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+            if armed_now:
+                saw_armed = True
+            elif saw_armed:
+                logger.event("monitor_exit_on_disarm")
+                if verbose:
+                    print("[monitor] vehicle disarmed — mission complete, exiting monitor.")
+                return
+
         if not verbose:
             continue
-        mtype = msg.get_type()
         if mtype == "STATUSTEXT":
             print(f"STATUSTEXT: {msg.text}")
         elif mtype == "MISSION_ITEM_REACHED":
@@ -476,9 +730,9 @@ def run_mission(
     """Run the mission end-to-end. Returns the path of the JSONL log written."""
     from pymavlink import mavutil  # imported lazily so unit tests don't need it
 
-    # capstone/ lives at Swarm_Drones/capstone/, repo root (where mission_logs/
-    # lives) is 3 levels up from capstone/missions/runner.py.
-    log_dir = log_dir or Path(__file__).resolve().parents[3] / "mission_logs"
+    # capstone/ lives at Swarm_Drones/capstone/; logs/ lives at the repo root
+    # (Swarm_Drones/), which is 2 levels up from capstone/missions/runner.py.
+    log_dir = log_dir or Path(__file__).resolve().parents[2] / "logs" / "mission_logs"
     logger = MissionLogger(log_dir, mission.name)
 
     try:
@@ -552,13 +806,31 @@ def run_mission(
 
         start_mission(master, mavutil)
         logger.event("mission_started")
-        drain_messages(master, logger, duration=monitor_timeout_s, verbose=True)
+        drain_messages(master, logger, duration=monitor_timeout_s, verbose=True,
+                       exit_on_disarm=True)
 
         logger.event("monitor_done")
         print("Mission monitoring window finished.")
         return logger.path
     finally:
         logger.close()
+        # Auto-generate the 2D XY trajectory PNG for this run. Shared report
+        # folder per log dir so all runs in a batch end up side-by-side.
+        # Best-effort overlay of the matching bridge flight_*.jsonl (wind +
+        # drop): looks for the most-recently-modified flight_*.jsonl in the
+        # SAME directory whose mtime is within 10 minutes of the mission log
+        # (user convention: bridge log gets moved alongside the mission log).
+        try:
+            report_dir = logger.path.parent / "report_flight"
+            bridge_log = _find_matching_bridge_log(logger.path)
+            out_png = plot_run_xy(logger.path, mission, home, report_dir,
+                                   bridge_log=bridge_log)
+            if out_png is not None:
+                print(f"XY plot: {out_png}"
+                      + (f"  (with bridge overlay: {bridge_log.name})"
+                         if bridge_log else "  (no bridge log found — no overlay)"))
+        except Exception as e:
+            print(f"[plot] auto-plot failed: {e!r}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -572,6 +844,11 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"MAVLink connection string (default {DEFAULT_MASTER})")
     p.add_argument("--monitor", type=float, default=DEFAULT_MONITOR_TIMEOUT_S,
                     help="how long to watch after mission start (seconds)")
+    p.add_argument("--log-subdir", default=None,
+                    help="Subdirectory under logs/mission_logs/ for this run's JSONL. "
+                         "If omitted, auto-routes by mission name "
+                         "(see DEFAULT_LOG_SUBDIRS). Pass e.g. 'rl_square100' "
+                         "for RL-deployed runs of the same mission.")
     args = p.parse_args(argv)
 
     mission = load(args.mission)
@@ -582,11 +859,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  waypoints:   {len(mission.waypoints)}")
     print(f"  return:      {mission.return_.type}")
     print(f"  home:        ({home.lat}, {home.lon})")
+
+    # Resolve log subdirectory: CLI override > auto-routing by mission name >
+    # empty (writes to logs/mission_logs/ root).
+    mission_logs_root = Path(__file__).resolve().parents[2] / "logs" / "mission_logs"
+    subdir = args.log_subdir or DEFAULT_LOG_SUBDIRS.get(mission.name, "")
+    log_dir = mission_logs_root / subdir if subdir else mission_logs_root
+    print(f"  log dir:     {log_dir}")
     print()
 
     log_path = run_mission(
         mission, home,
         master_url=args.master,
+        log_dir=log_dir,
         monitor_timeout_s=args.monitor,
     )
     print(f"\nDone. Log: {log_path}")

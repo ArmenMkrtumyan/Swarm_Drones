@@ -1,9 +1,9 @@
 """Smoke tests for capstone.missions.benchmark_mission.
 
-Uses the canonical PID baseline log in mission_logs/baseline_pid/. That
+Uses the canonical PID baseline log in logs/mission_logs/baseline_pid/. That
 batch directory holds only good runs; the 2 aborted runs from earlier
 attempts were deleted. Future RL eval batches go in their own subdir
-(e.g. mission_logs/rl_eval_<date>/) so logs from different controllers
+(e.g. logs/mission_logs/rl_eval_<date>/) so logs from different controllers
 never get mixed in the same benchmark.
 """
 from __future__ import annotations
@@ -26,9 +26,9 @@ from capstone.missions.benchmark_mission import (
 from capstone.missions.dsl import HomePosition, load as load_mission
 
 
-REPO = Path(__file__).resolve().parents[3]
-SQUARE_YAML = REPO / "Swarm_Drones" / "capstone" / "missions" / "cases" / "square_20m.yaml"
-MISSION_LOGS = REPO / "mission_logs" / "baseline_pid"
+REPO = Path(__file__).resolve().parents[2]   # Swarm_Drones/
+SQUARE_YAML = REPO / "capstone" / "missions" / "cases" / "square_20m.yaml"
+MISSION_LOGS = REPO / "logs" / "mission_logs" / "baseline_pid"
 GOOD_LOG = MISSION_LOGS / "mission_20260504_223554_square_20m.jsonl"
 HOME = HomePosition(lat=40.192, lon=44.50446)
 
@@ -128,14 +128,14 @@ def test_good_run_overshoot_2m_per_corner(mission, good_log):
 def test_good_run_settle_lag_exceeds_hold(mission, good_log):
     """Manual analysis of the good log: 22-30 s settle lag at every WP
     because the drone re-entered the accept radius repeatedly after each
-    overshoot. Has to exceed whatever hold_s the YAML currently specifies."""
+    overshoot. Has to exceed whatever post_yaw_settle_s the YAML specifies."""
     run = analyze_run(good_log, mission, HOME)
-    hold_s = mission.waypoints[0].hold_s
+    settle_s = mission.waypoints[0].post_yaw_settle_s
     for wp in run.waypoint_metrics:
         assert wp.settle_lag_s is not None
-        assert wp.settle_lag_s > hold_s, (
+        assert wp.settle_lag_s > settle_s, (
             f"WP{wp.seq}: settle_lag {wp.settle_lag_s:.2f} s should exceed "
-            f"hold_s {hold_s}")
+            f"post_yaw_settle_s {settle_s}")
         assert wp.settle_lag_s < 60.0, (
             f"WP{wp.seq}: settle_lag {wp.settle_lag_s:.2f} s implausibly large")
 

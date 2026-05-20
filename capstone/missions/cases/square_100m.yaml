@@ -1,0 +1,51 @@
+name: square_100m
+description: |
+  Stage 2 reference mission #2: 100 m square at 3 m altitude.
+  Drone takes off, flies four 100 m legs of a square (relative to home),
+  holds 1 s at each corner, then RTLs. The longer legs expose the
+  attitude/altitude/position dynamics under sustained transit, in contrast
+  to the 20 m square where most of the flight is in turn-in/turn-out
+  transients.
+
+  Intended pairing: run with `mission_worst_case` disturbance profile so
+  each run sees a random wind direction (±X or ±Y) and a random 400 g
+  mass-drop time during leg 2 (window [20 s, 50 s] after the drone leaves
+  the ground).
+
+  Gates: same scheme as square_20m.yaml — see capstone/missions/replay.py.
+
+takeoff:
+  altitude_m: 3.0
+
+defaults:
+  altitude_m: 3.0
+  # The DSL compiles each WP into NAV_WAYPOINT(p1=pre_yaw_stop_s) +
+  # CONDITION_YAW(toward next WP, or home for last WP) + NAV_DELAY(p1=post).
+  # pre_yaw_stop_s = brake-and-stop time at the WP before yaw. Without this,
+  # the drone arrives with residual transit velocity (~5-8 m/s for 100m legs)
+  # and starts yawing while still drifting — tilting it off the next leg's
+  # intended start position. 2 s lets pos_control bring it to a full stop.
+  # post_yaw_settle_s = additional stationary settle after the yaw completes,
+  # for pos_control to damp residual oscillation before the next leg starts.
+  # The F450's soft yaw gains (ATC_RAT_YAW_P=0.05, ATC_ANG_YAW_P=1.0) limit
+  # yaw rate to ~22 deg/s, but CONDITION_YAW blocks the mission until the
+  # target heading is reached, so we don't budget hold time for the yaw itself.
+  # Total stationary time per WP ≈ pre (2) + yaw (~4) + post (2) = ~8 s.
+  pre_yaw_stop_s: 2.0
+  post_yaw_settle_s: 2.0
+  # accept_radius_m is HORIZONTAL distance to consider the WP "reached" — once
+  # within this radius, the post-yaw flow (yaw -> settle) starts. Under
+  # mission_worst_case (5 m/s gusts + 400 g mid-flight mass drop), the drone
+  # may drift in/out of a tight radius during settle and re-trigger pos
+  # control; 2.0 m gives wind tolerance without making the trajectory plot
+  # meaningless.
+  accept_radius_m: 2.0
+
+waypoints:
+  - {north_m: 100, east_m:   0}   # WP1: north leg end
+  - {north_m: 100, east_m: 100}   # WP2: NE corner (mass drop fires inside this leg)
+  - {north_m:   0, east_m: 100}   # WP3: east leg end
+  - {north_m:   0, east_m:   0}   # WP4: back to launch
+
+return:
+  type: rtl

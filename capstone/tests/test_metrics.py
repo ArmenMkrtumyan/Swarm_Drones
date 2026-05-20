@@ -14,8 +14,8 @@ from capstone.common.logging import load
 from capstone.control.metrics import compute_metrics, find_hover_window
 
 
-REPO = Path(__file__).resolve().parents[3]   # capstone/ at Swarm_Drones/capstone/, repo root is 3 up
-LOGS = REPO / "flight_logs"
+REPO = Path(__file__).resolve().parents[2]   # Swarm_Drones/ (capstone/tests/<file>.py is 2 levels deep)
+LOGS = REPO / "logs" / "flight_logs"
 GOOD_LOG = LOGS / "flight_20260504_105431.jsonl"
 BAD_LOG = LOGS / "flight_20260502_204830.jsonl"
 

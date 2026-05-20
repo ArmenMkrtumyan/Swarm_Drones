@@ -50,7 +50,7 @@ from capstone.common.logging import FlightLog, load
 # profile -- but right now we don't know that, and we want RL to surprise us.
 CALM_GATES: dict[str, tuple[str, float]] = {
     # Gates re-baselined 2026-05-05 from a 3-run calm reference batch
-    # (CALM1/CALM2/CALM3, copied into benchmark_hover_report/calm_baseline_runs/).
+    # (CALM1/CALM2/CALM3, copied into reports/benchmark_hover_report/calm_baseline_runs/).
     # Each threshold is set above what the 3 runs actually measure so calm
     # passes reliably. ANY profile that meets these is at "calm-quality hover"
     # — that's the bar RL has to clear under disturbance.

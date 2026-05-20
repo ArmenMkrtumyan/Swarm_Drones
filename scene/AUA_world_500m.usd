@@ -88,7 +88,7 @@
             string boundCamera = "/World/hawks_work_f450_jetsonnano_steereocam/left_camera_frame/left_camera_mount/left_camera"
         }
         dictionary omni_layer = {
-            string authoring_layer = "./500mAUA_drone.usd"
+            string authoring_layer = "./AUA_world_500m.usd"
             dictionary locked = {
             }
             dictionary muteness = {
@@ -115,7 +115,7 @@
 def Xform "World"
 {
     def "AUA_Scene" (
-        prepend references = @../../aua_bake/usd/aua_scene_500m.usda@
+        prepend references = @./aua_bake/aua_scene_500m.usda@
     )
     {
         double3 xformOp:rotateZYX = (0, 0, 0)
@@ -164,9 +164,9 @@ def Xform "World"
                     float horizontalAperture = 4.382
                     custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.0003024683150381431)
                     float verticalAperture = 3.957
-                    quatd xformOp:orient = (0.994135911620467, -0.10805688556871396, -0.004075083054441396, -0.0009446723412396741)
+                    quatd xformOp:orient = (0.9893367808249401, -0.1436364109490097, 0.023926904166599813, 0.0029696487391457998)
                     double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
-                    double3 xformOp:translate = (0.13737644108178104, 0.44571562644305374, 1.3523790672436746)
+                    double3 xformOp:translate = (0.13737644108178113, 0.44571562644305374, 1.3523790672436746)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                 }
             }
@@ -518,7 +518,7 @@ def Xform "World"
         uniform token subdivisionScheme = "none"
         token visibility = "inherited"
         quatd xformOp:orient = (1, 0, 0, 0)
-        double3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:scale = (5, 5, 1)
         double3 xformOp:translate = (0, 0, 0.5)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
     }

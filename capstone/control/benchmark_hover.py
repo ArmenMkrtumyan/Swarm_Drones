@@ -4,7 +4,7 @@ Walks a folder of bridge JSONL flight logs, detects which disturbance profile
 each log used, computes the same metrics that the Stage-1 gates use, and writes
 a benchmark package:
 
-  benchmark_hover_report/
+  reports/benchmark_hover_report/
     baseline.csv            -- one row per log, summary stats
     baseline.json           -- full metric records for machine consumption
     plots/<log>_series.png  -- per-log time series (alt / xy / attitude / gyro)
@@ -16,10 +16,10 @@ Without this benchmark locked, "RL beat ArduCopter" is unmeasurable. Sister
 tool for Stage-2 missions: capstone.missions.benchmark_mission.
 
 Usage:
-    python -m capstone.control.benchmark_hover flight_logs/
-    python -m capstone.control.benchmark_hover flight_logs/ --out benchmark_hover_report
-    python -m capstone.control.benchmark_hover flight_logs/ --no-plots       # CSV/JSON only
-    python -m capstone.control.benchmark_hover flight_logs/ --require-event  # official:
+    python -m capstone.control.benchmark_hover logs/flight_logs/
+    python -m capstone.control.benchmark_hover logs/flight_logs/ --out reports/benchmark_hover_report
+    python -m capstone.control.benchmark_hover logs/flight_logs/ --no-plots       # CSV/JSON only
+    python -m capstone.control.benchmark_hover logs/flight_logs/ --require-event  # official:
                                                                               # only logs from
                                                                               # the new bridge
                                                                               # with a chosen
@@ -725,8 +725,8 @@ def render_summary(rows: list[dict]) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("folder", type=Path, help="directory with *.jsonl flight logs")
-    p.add_argument("--out", type=Path, default=Path("benchmark_hover_report"),
-                   help="output directory (default: benchmark_hover_report)")
+    p.add_argument("--out", type=Path, default=Path("reports/benchmark_hover_report"),
+                   help="output directory (default: reports/benchmark_hover_report)")
     p.add_argument("--no-plots", action="store_true",
                    help="skip matplotlib plots; CSV/JSON only")
     p.add_argument("--min-samples", type=int, default=200,

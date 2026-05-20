@@ -1,0 +1,79 @@
+# HoverPidTuner-v0 — Phase-2 fine-tune config (Plan C).
+# Action / observation / reward MUST match cfg/pretrain_v0.yaml so the
+# Phase-1 policy weights load and continue to learn on real ArduPilot SITL.
+
+env:
+  # Bind on ALL interfaces (empty host = 0.0.0.0). Required because SITL
+  # runs in WSL and pushes to the Windows host IP (--out=udp:192.168.208.1:14552
+  # in the SITL launch). udpin:localhost:14552 would only bind Windows
+  # loopback, which WSL2 cannot reach. udpin::14552 catches the WSL-NAT
+  # virtual NIC too.
+  mavlink_url: "udpin:0.0.0.0:14552"
+  hover_alt_m: 3.0
+  step_interval_s: 0.5         # sim seconds per step (= wall time at 1× SITL)
+  max_episode_steps: 120        # 60 s of hover per episode
+  settle_timeout_s: 30.0
+  init_jitter_pct: 0.0          # no init mistuning in Phase 2 — start from real ArduPilot defaults
+  crash_alt_m: 0.5
+  # Match Phase-1 (we don't crash on horizontal drift; horizontal PSC is real
+  # ArduPilot's job, no RL signal here from XY position).
+  crash_pos_xy_m: 50.0
+  crash_attitude_deg: 60.0
+  survival_bonus: 10.0          # match Phase 1
+  crash_penalty: -50.0
+  reward_scale: 1.0
+  base_step_reward: 1.0
+  w_alt_err: 1.0
+  w_pos_err: 0.0                # match Phase 1
+  w_vel: 0.05
+  w_attitude: 5.0               # match Phase 1 — high signal on hover quality
+  w_gyro: 0.5                   # match Phase 1
+  w_action_smooth: 0.01
+
+# Action set: 8 attitude-loop gains, identical to cfg/pretrain_v0.yaml.
+# Order is the contract that lets weight transfer work — do not change.
+gains:
+  - { name: ATC_ANG_RLL_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_ANG_PIT_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_RAT_RLL_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+  - { name: ATC_RAT_PIT_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+
+# Algorithm: PPO. Must match pretrain_v0.yaml so the saved policy loads
+# directly. PPO with a single env at real-time is on-policy & sample-hungry,
+# so we run a small number of total timesteps and rely on the pretrained
+# initialization to give us a head start.
+algo: PPO
+algo_kwargs:
+  learning_rate: 1.0e-4         # lower than Phase 1 (3e-4) — fine-tune stability
+  n_steps: 32                   # rollout length (32 * 0.5 sim s = 16 s per update)
+  batch_size: 32                # full-batch (single env => batch == n_steps)
+  n_epochs: 4                   # fewer epochs than Phase 1 to avoid overfit on small batch
+  gamma: 0.98
+  gae_lambda: 0.95
+  clip_range: 0.1               # smaller clip — fine-tune carefully
+  ent_coef: 0.0                 # less exploration — pretrain already covers state space
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  device: "cpu"                 # MLP on GPU has launch-overhead penalty (see PLAN_C.md)
+  policy_kwargs:
+    net_arch: [128, 128]
+  verbose: 1
+
+# Not used by PPO but kept for compatibility with the loader (which reads
+# this section unconditionally). Adapter ignores it for on-policy algos.
+action_noise:
+  type: normal
+  sigma: 0.0
+
+# Training run length & checkpointing.
+# 1000 timesteps ≈ 8-9 episodes, ~15-20 min wall (incl. ~30-60 s reset per
+# episode). Start short, see if reward changes; bump up if it converges.
+total_timesteps: 1000
+log_dir: "logs/tb_logs/hover_v0"
+checkpoint_dir: "logs/checkpoints/hover_v0"
+checkpoint_every_steps: 250
+seed: 42

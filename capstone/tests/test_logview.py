@@ -17,9 +17,9 @@ from capstone.common.logview import (
 )
 
 
-REPO = Path(__file__).resolve().parents[3]   # capstone/ at Swarm_Drones/capstone/, repo root is 3 up
-GOOD_LOG = REPO / "flight_logs" / "flight_20260504_105431.jsonl"
-WIND_LOG = REPO / "flight_logs" / "flight_20260504_123507_WIND5.jsonl"
+REPO = Path(__file__).resolve().parents[2]   # Swarm_Drones/ (capstone/tests/<file>.py is 2 levels deep)
+GOOD_LOG = REPO / "logs" / "flight_logs" / "flight_20260504_105431.jsonl"
+WIND_LOG = REPO / "logs" / "flight_logs" / "flight_20260504_123507_WIND5.jsonl"
 
 
 @pytest.fixture

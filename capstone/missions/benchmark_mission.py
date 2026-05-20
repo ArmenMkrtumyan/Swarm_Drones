@@ -10,7 +10,7 @@ Per-waypoint metrics (the headline numbers RL is graded against):
                            accept_radius_m (proxy for braking quality)
     settle_lag_s        -- t(MISSION_ITEM_REACHED) - t(first arrival),
                            i.e. how long it takes ArduCopter to settle
-                           inside the accept radius and hold for hold_s
+                           inside the accept radius and hold for post_yaw_settle_s
     xtrack_p95_m        -- 95th-percentile perpendicular distance from the
                            prev->this straight-line leg (path tracking)
     leg_duration_s      -- t(MISSION_ITEM_REACHED) - t(prev MISSION_ITEM_REACHED)
@@ -21,7 +21,7 @@ Mission-level metrics:
     rtl_offset_m        -- distance from first to last GLOBAL_POSITION_INT,
                            proxy for RTL accuracy
 
-Outputs (under benchmark_mission_report/<mission_name>/):
+Outputs (under reports/benchmark_mission_report/<mission_name>/):
     per_run_per_wp.csv   one row per (run, waypoint)
     per_run_summary.csv  one row per run
     per_wp_summary.csv   one row per waypoint, mean +/- std across runs
@@ -39,7 +39,7 @@ Usage:
 
     # Just reanalyze existing logs
     python -m capstone.missions.benchmark_mission \\
-        capstone/missions/cases/square_20m.yaml --logs mission_logs/
+        capstone/missions/cases/square_20m.yaml --logs logs/mission_logs/
 
     # Single run + plots
     python -m capstone.missions.benchmark_mission \\
@@ -111,7 +111,7 @@ class MissionRunMetrics:
 
 
 # -----------------------------------------------------------------------------
-# Mission JSONL loader. mission_logs/*.jsonl mixes:
+# Mission JSONL loader. logs/mission_logs/*.jsonl mixes:
 #   src=script  (lifecycle: script_started, mission_started, monitor_done, ...)
 #   src=mavlink (every MAVLink message the runner observed)
 # capstone.common.logging silently ignores both, so we use a focused loader.
@@ -229,10 +229,18 @@ def analyze_run(log_path: Path, mission: Mission, home: HomePosition) -> Mission
     """Compute per-waypoint and mission-level metrics for one mission JSONL log.
 
     Mission item layout (from dsl.compile_to_mavlink_items):
-        seq=0           NAV_TAKEOFF                 (skipped via set_current=1)
-        seq=1..N        NAV_WAYPOINT (mission.waypoints)
-        seq=N+1         RTL or LAND
+        seq=0                  NAV_TAKEOFF                (skipped via set_current=1)
+        per waypoint:          NAV_WAYPOINT
+                               CONDITION_YAW    (only if post_yaw_settle_s > 0)
+                               NAV_DELAY        (only if post_yaw_settle_s > 0)
+        seq=last               RTL or LAND
+
+    We don't assume seqs 1..N are the waypoints — instead we compile the
+    items and read the actual NAV_WAYPOINT seqs. That keeps the analyzer
+    correct whether each WP has a post-yaw-settle triple or fly-through.
     """
+    from capstone.missions.dsl import compile_to_mavlink_items, MAV_CMD_NAV_WAYPOINT
+
     raw = load_mission_log(log_path)
     positions = raw["positions"]
     mission_reached = raw["mission_reached"]
@@ -257,19 +265,29 @@ def analyze_run(log_path: Path, mission: Mission, home: HomePosition) -> Mission
 
     n_wp = len(mission.waypoints)
 
+    # Resolve MAVLink seqs of each waypoint's NAV_WAYPOINT item from the
+    # compiled mission. wp_seqs[i] is the seq for waypoint i (0-indexed).
+    items = compile_to_mavlink_items(mission, home)
+    wp_seqs = [it["seq"] for it in items if it["command"] == MAV_CMD_NAV_WAYPOINT]
+    if len(wp_seqs) != n_wp:
+        raise RuntimeError(
+            f"compiled NAV_WAYPOINT count {len(wp_seqs)} != mission.waypoints {n_wp}; "
+            "DSL and analyzer disagree on item layout"
+        )
+
     wp_metrics: list[WaypointMetrics] = []
     for i, wp in enumerate(mission.waypoints):
-        seq = i + 1
+        seq = wp_seqs[i]
         n_m, e_m = waypoint_target_ne(wp, home)
         accept = wp.accept_radius_m
         leg_t_end = reached_by_seq.get(seq)
 
-        # Leg start = previous WP's MISSION_ITEM_REACHED time. For WP1, the
-        # takeoff submode usually does NOT fire seq=0 reached (we skip past
-        # via set_current=1), so we fall back to mission_started_t.
-        prev_seq = seq - 1
-        if prev_seq in reached_by_seq:
-            leg_t_start = reached_by_seq[prev_seq]
+        # Leg start = previous WP's NAV_WAYPOINT MISSION_ITEM_REACHED. For
+        # WP1, takeoff (seq=0) usually doesn't fire reached because the
+        # runner uses set_current=1 to skip past it, so we fall back to
+        # mission_started_t.
+        if i > 0 and wp_seqs[i - 1] in reached_by_seq:
+            leg_t_start = reached_by_seq[wp_seqs[i - 1]]
         else:
             leg_t_start = mission_started_t
 
@@ -661,10 +679,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--logs", type=Path, default=None,
                    help="Directory of mission_*.jsonl files. Used as the runner's "
                         "output dir when --runs > 0, and as the input dir in "
-                        "analyze-only mode. Default: <repo>/mission_logs/baseline_pid")
+                        "analyze-only mode. Default: <repo>/logs/mission_logs/baseline_pid")
     p.add_argument("--out", type=Path, default=None,
                    help="Output directory "
-                        "(default: <repo>/benchmark_mission_report/<mission_name>/)")
+                        "(default: <repo>/reports/benchmark_mission_report/<mission_name>/)")
     p.add_argument("--home-lat", type=float, default=_DEFAULT_HOME_LAT)
     p.add_argument("--home-lon", type=float, default=_DEFAULT_HOME_LON)
     p.add_argument("--master", default="udpin:localhost:14551",
@@ -678,9 +696,9 @@ def main(argv: list[str] | None = None) -> int:
     mission = load_mission(args.mission)
     home = HomePosition(lat=args.home_lat, lon=args.home_lon)
 
-    repo_root = Path(__file__).resolve().parents[3]
-    logs_dir = args.logs or (repo_root / "mission_logs" / "baseline_pid")
-    out_dir = args.out or (repo_root / "benchmark_mission_report" / mission.name)
+    repo_root = Path(__file__).resolve().parents[2]   # Swarm_Drones/
+    logs_dir = args.logs or (repo_root / "logs" / "mission_logs" / "baseline_pid")
+    out_dir = args.out or (repo_root / "reports" / "benchmark_mission_report" / mission.name)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     new_log_paths: list[Path] = []

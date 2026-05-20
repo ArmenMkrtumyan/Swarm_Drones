@@ -8,7 +8,7 @@
 # What works:
 #   25-second clean hover, roll/pitch under ±5° during steady state
 #   (peaks ±13/19° in transients), yaw rate mean 12°/s, position drift
-#   under 0.5 m. Reference flight: flight_logs/flight_20260502_204830.jsonl.
+#   under 0.5 m. Reference flight: logs/flight_logs/flight_20260502_204830.jsonl.
 #
 # What doesn't:
 #   ArduPilot AUTOTUNE failed in every attempt — drone class doesn't fit
@@ -135,14 +135,18 @@ SIM_BARO_RND 0.01
 WP_SPD 8.0
 WP_ACC 3.5
 
-# Don't auto-rotate yaw during waypoint nav. Tried option 2 (face next WP
-# except RTL) on 2026-05-05 -- worked fine on short square_20m legs but
-# triggered EKF "GPS Glitch or Compass error" + emergency yaw reset on the
-# longer aua_short legs (300+ m at 8 m/s). The combination of full-speed
-# translation + active yaw rotation lets GPS course and mag heading
-# disagree past EKF tolerance, cascading into EKF Failsafe. Reverting to
-# 0 keeps takeoff heading the whole mission and removes the conflict.
-# To enable yaw tracking later for video purposes, options are: slow the
-# yaw rate (ATC_RAT_YAW_P/I lower), increase mag noise tolerance
-# (EK3_YAW_M_NSE), or only yaw when speed < threshold.
-WP_YAW_BEHAVIOR 0
+# Yaw behavior during waypoint nav.
+# 2026-05-05: option 2 (face next WP DURING transit) caused EKF GPS Glitch
+# failsafe on aua_short's long (300+ m) high-speed legs -- yaw rotation while
+# the drone was moving at 8 m/s let GPS course and mag heading disagree past
+# EKF tolerance.
+# 2026-05-12: switched to option 1 (face next WP AT arrival, not during
+# transit). With hold_s = 1.0 at each waypoint, the drone reaches the WP,
+# stops, yaws while stationary to face the next WP, then accelerates. No
+# yaw rotation during fast transit -- avoids the original failsafe mechanism.
+# Belt-and-suspenders: ATC_SLEW_YAW also lowered to 30°/s (3000 cdeg/s)
+# from the default 60°/s, so even the stationary turn is gentle. If a
+# failsafe still fires on 100 m or longer missions, widen EK3_*_I_GATE
+# (currently default 500) to 1000 each.
+WP_YAW_BEHAVIOR 1
+ATC_SLEW_YAW 3000

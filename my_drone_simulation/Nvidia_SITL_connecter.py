@@ -18,17 +18,28 @@ from isaacsim.core.experimental.prims import RigidPrim
 from isaacsim.sensors.physics import _sensor
 
 # =========================================================
-# CAPSTONE STAGE-1 DISTURBANCE HARNESS (optional)
+# CAPSTONE DISTURBANCE HARNESS (optional)
 # =========================================================
-# Edit CAPSTONE_PROFILE below to switch between hover-robustness profiles:
-#   "calm"            -- no disturbance (DEFAULT; behavior identical to pre-harness)
-#   "mass_drop_300g"  -- carries +300 g payload, drops it after 5 s of hover
-#                        (>= 1.5 m altitude).
-#   "wind5"           -- OU wind gust ~5 m/s peaks along world +X
-#   "wind_up3"        -- OU updraft ~3 m/s peaks along world +Z (pushes drone up)
-#   "wind_down3"      -- OU downdraft ~3 m/s peaks along world -Z (pushes drone down)
-#   "imu_noise"       -- gyro/accel Gaussian + bias-walk on values sent to SITL
-#   "worst_case"      -- wind5 + mass_drop_300g + imu_noise stacked (stress test)
+# Edit CAPSTONE_PROFILE below to switch between disturbance profiles.
+# Stage-1 hover-robustness profiles (fixed-direction, fixed-time):
+#   "calm"               -- no disturbance (DEFAULT; behavior identical to pre-harness)
+#   "mass_drop_300g"     -- carries +300 g payload, drops it after 5 s of hover
+#                           (>= 1.5 m altitude).
+#   "wind5"              -- OU wind gust ~5 m/s peaks along world +X (fixed direction)
+#   "wind_up3"           -- OU updraft ~3 m/s peaks along world +Z (pushes drone up)
+#   "wind_down3"         -- OU downdraft ~3 m/s peaks along world -Z (pushes drone down)
+#   "imu_noise"          -- gyro/accel Gaussian + bias-walk on values sent to SITL
+#   "worst_case"         -- wind5 (fixed +X) + mass_drop_300g + imu_noise stacked
+#
+# Stage-2 mission-robustness profiles (added 2026-05-12; random per bridge restart):
+#   "wind5_rand"         -- OU wind ~5 m/s, direction sampled from {+X, -X, +Y, -Y}
+#                           at bridge construction. Fresh seed (None default) =
+#                           different direction every restart.
+#   "mission_worst_case" -- wind5_rand + 400 g mass_drop with RANDOM drop time
+#                           in [38, 58] s post-airborne (~ "20 s after WP1, before
+#                           WP3" on a 100 m square at WP_SPD=8 m/s) + imu_noise.
+#                           Drop time re-samples on each disarm/rearm cycle.
+#
 # Re-import this script in the Isaac Script Editor after editing.
 # Implementation in capstone/control/disturbance.py.
 CAPSTONE_PROFILE = "calm"
@@ -93,7 +104,7 @@ except NameError:
 # FLIGHT LOGGER
 # =========================================================
 # Writes a single unified JSONL file per bridge session under
-# armen-capstone/flight_logs/. Each line is a single event with:
+# Swarm_Drones/logs/flight_logs/. Each line is a single event with:
 #   t:    Isaac physics/simulation seconds when available
 #   src:  one of "sitl->isaac" | "isaac->sitl" | "bridge"
 # Then source-specific payload fields. Post-flight analysis just reads the
@@ -107,7 +118,7 @@ STATE_LOG_PERIOD_S = 0.02   # 50 Hz
 DEBUG_PRINT_HZ = 1.0     # do not spam the 1000 Hz physics callback
 PWM_DEBUG_PRINT_HZ = 1.0 # rate-limit motor/PWM debug output
 
-FLIGHT_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\flight_logs"
+FLIGHT_LOG_DIR = r"C:\Users\user1811\Desktop\armen-capstone\Swarm_Drones\logs\flight_logs"
 
 
 # Self-documenting schema written into each flight log as a `log_schema` event,

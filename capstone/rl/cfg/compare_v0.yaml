@@ -1,0 +1,91 @@
+# compare_v0 — DDPG vs TD3 vs PPO comparison on HoverPretrain-v0.
+# All three see the same env + same total timesteps + same network arch.
+# Off-policy (DDPG/TD3) share replay/target-net/noise knobs; PPO has its own
+# on-policy block (rollout length, GAE, clip, epochs).
+
+env:
+  num_envs: 8                  # off-policy: small batch keeps replay buffer healthy
+  device: "cpu"                # env tensors are too small for GPU to win
+  hover_alt_m: 3.0
+  max_episode_steps: 120
+  inner_steps_per_action: 200
+  physics_dt: 0.0025
+  crash_alt_m: 0.5
+  crash_pos_xy_m: 50.0
+  crash_attitude_deg: 60.0
+  survival_bonus: 10.0
+  crash_penalty: -50.0
+  reward_scale: 1.0
+  base_step_reward: 1.0
+  w_alt_err: 1.0
+  w_pos_err: 0.0
+  w_vel: 0.05
+  w_attitude: 5.0
+  w_gyro: 0.5
+  w_action_smooth: 0.01
+
+dr:
+  mass:                     { lo: 1.10, hi: 1.60 }
+  motor_tau:                { lo: 0.030, hi: 0.080 }
+  K_thrust_jitter:          { lo: 0.85, hi: 1.15 }
+  K_drag:                   { lo: 0.020, hi: 0.040 }
+  gyro_bias:                { lo: -0.03, hi: 0.03 }
+  gyro_noise_sigma:         { lo: 0.0,  hi: 0.10 }
+  init_attitude_deg:        { lo: -20.0, hi: 20.0 }
+  init_alt_offset:          { lo: -0.5, hi: 0.5 }
+  init_xy_offset:           { lo: -0.5, hi: 0.5 }
+  initial_gain_mistune_pct: { lo: -0.60, hi: 0.60 }
+
+gains:
+  - { name: ATC_ANG_RLL_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_ANG_PIT_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_RAT_RLL_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+  - { name: ATC_RAT_PIT_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+
+# Shared hyperparameters — identical between DDPG and TD3.
+shared:
+  total_timesteps: 200000
+  learning_rate: 3.0e-4
+  buffer_size: 200000
+  learning_starts: 10000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: [1, "step"]      # one update cycle per env-step (8 transitions / cycle)
+  gradient_steps: 8            # 1 grad step per transition collected
+  action_noise_sigma: 0.1      # NormalActionNoise std per action dim
+  policy_kwargs:
+    net_arch: [256, 256]
+  device: "cuda"               # MLP forward/backward → GPU wins
+
+# TD3-specific knobs. DDPG ignores these.
+td3:
+  target_policy_noise: 0.2
+  target_noise_clip: 0.5
+  policy_delay: 2
+
+# PPO (on-policy): has its own hyperparams. Same lr / network / total
+# timesteps as off-policy block; rollout/GAE/clip/epochs are PPO-only. Device
+# override to CPU because PPO MLP forward/backward is dominated by GPU launch
+# overhead at our batch size — SB3 explicitly recommends CPU here.
+ppo:
+  n_steps: 512                 # 512 * 8 envs = 4096 transitions per update
+  batch_size: 256              # PPO minibatch
+  n_epochs: 10
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  device: "cpu"
+
+seeds: [0, 1, 2, 3, 4]
+algos: ["DDPG", "TD3", "PPO"]
+
+log_root: "logs/tb_logs/compare_v0"
+checkpoint_root: "logs/checkpoints/compare_v0"
+eval_episodes: 10

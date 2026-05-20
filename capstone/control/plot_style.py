@@ -3,8 +3,8 @@
 Edit colors, line widths, axis labels, and profile display names here, then
 re-run the analyzer (no Isaac/SITL session needed):
 
-    python -m capstone.control.benchmark_hover  flight_logs/
-    python -m capstone.control.benchmark_mission --replot --analyze mission_logs/baseline_pid_aua/
+    python -m capstone.control.benchmark_hover  logs/flight_logs/
+    python -m capstone.control.benchmark_mission --replot --analyze logs/mission_logs/baseline_pid_aua/
 
 Both tools also write an SVG next to every PNG, so cosmetic tweaks can be done
 in Inkscape / Illustrator / a text editor as well.

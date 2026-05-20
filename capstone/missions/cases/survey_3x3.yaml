@@ -17,7 +17,7 @@ takeoff:
 
 defaults:
   altitude_m: 4.0
-  hold_s: 0.0
+  post_yaw_settle_s: 0.0   # fly-through: no yaw stop between survey lines
   accept_radius_m: 1.5
 
 # Grid origin at south-west corner: home = (0, 0). Lines run east at y=0,

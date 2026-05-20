@@ -1,0 +1,105 @@
+# HoverPretrain-v0 — Phase-1 GPU pre-training config (Plan C).
+#
+# Output policy is a drop-in initialization for hover_v0 fine-tuning. Action
+# and observation spec MUST match cfg/hover_v0.yaml exactly; gain list order
+# is the contract that lets weight transfer work.
+
+env:
+  num_envs: 4096                # benchmarked ~5.6 k env-steps/s on CPU; 1M timesteps in ~3-5 min
+  # 2026-05-06: env tensors are too small per-step for CUDA to win — many
+  # tiny kernel launches dominate, CPU torch is ~3x faster here. SB3's
+  # PPO update step uses CUDA automatically. The full training run lands
+  # well under 10 min wall, so GPU underutilization at the env level
+  # is moot. See PLAN_C.md §11 "Outstanding work" → optimization for
+  # torch.compile / fused-loop options if we ever need more throughput.
+  device: "cpu"
+  hover_alt_m: 3.0
+  max_episode_steps: 120        # 60 s sim per ep at step_interval 0.5 s
+  inner_steps_per_action: 200   # 200 * physics_dt = 0.5 s sim per env step
+  physics_dt: 0.0025
+
+  crash_alt_m: 0.5
+  # 2026-05-06: relaxed from 8.0 to 50.0 so horizontal drift doesn't terminate
+  # episodes. Mirror has only altitude PSC (no horizontal), so without this,
+  # any small initial roll causes 60 s of drift to crash the run regardless
+  # of attitude tuning. Adding horizontal PSC is a v1 task; for v0 we let the
+  # drone drift and focus rewards/learning on attitude quality.
+  crash_pos_xy_m: 50.0
+  crash_attitude_deg: 60.0
+
+  survival_bonus: 10.0
+  crash_penalty: -50.0
+  reward_scale: 1.0
+  base_step_reward: 1.0
+  w_alt_err: 1.0
+  # 2026-05-06: w_pos_err set to 0 in v0 (no horizontal PSC; pos_err is
+  # uncontrollable from this action set, so penalizing it adds noise to the
+  # gradient signal). Restored to 0.5 once horizontal PSC lands in v1.
+  w_pos_err: 0.0
+  w_vel: 0.05
+  # 2026-05-06 v0.1: bumped attitude/gyro weights so the policy gets a sharper
+  # gradient on hover quality (small attitude rms differences become salient).
+  # The "do nothing" policy collapses to 125 reward but a faster-recovering
+  # policy can hit ~129+, which gives RL real signal to chase.
+  w_attitude: 5.0
+  w_gyro: 0.5
+  w_action_smooth: 0.01
+
+# Domain randomization ranges. uniform[lo, hi] sampled per env on reset.
+# 2026-05-06 v0.1: cranked up vs v0 because the original DR was too gentle —
+# default gains handled all perturbations, so the trained policy converged to
+# "do nothing" which doesn't transfer useful skill to Phase 2. Now the
+# policy faces severe gain mistuning (-60% to +60%) AND large initial
+# attitude perturbations (±20°), which cannot be recovered without
+# ATC re-tuning. The policy must learn to detect oscillation/sluggishness
+# and adjust gains.
+dr:
+  mass:                 { lo: 1.10, hi: 1.60 }
+  motor_tau:            { lo: 0.030, hi: 0.080 }
+  K_thrust_jitter:      { lo: 0.85, hi: 1.15 }
+  K_drag:               { lo: 0.020, hi: 0.040 }
+  gyro_bias:            { lo: -0.03, hi: 0.03 }
+  gyro_noise_sigma:     { lo: 0.0,  hi: 0.10 }
+  init_attitude_deg:    { lo: -20.0, hi: 20.0 }
+  init_alt_offset:      { lo: -0.5, hi: 0.5 }
+  init_xy_offset:       { lo: -0.5, hi: 0.5 }
+  initial_gain_mistune_pct: { lo: -0.60, hi: 0.60 }
+
+# Action set: same 8 attitude-loop gains as cfg/hover_v0.yaml. The order
+# defines the policy's action vector layout. Changing this breaks weight
+# transfer to Phase 2.
+gains:
+  - { name: ATC_ANG_RLL_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_ANG_PIT_P, baseline: 4.5,    lo: 1.0,  hi: 12.0,  delta_per_step: 0.20 }
+  - { name: ATC_RAT_RLL_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_P, baseline: 0.135,  lo: 0.02, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_PIT_I, baseline: 0.135,  lo: 0.01, hi: 0.50,  delta_per_step: 0.010 }
+  - { name: ATC_RAT_RLL_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+  - { name: ATC_RAT_PIT_D, baseline: 0.0036, lo: 0.0,  hi: 0.05,  delta_per_step: 0.0010 }
+
+# Stable-Baselines3 algo. PPO is the default for vectorized envs (better
+# sample efficiency than TD3 when env is fast). For Phase 2 we keep TD3
+# (single env, off-policy is more sample-efficient).
+algo: PPO
+algo_kwargs:
+  learning_rate: 3.0e-4
+  n_steps: 32                   # rollout length per env per update
+  batch_size: 1024              # minibatch size
+  n_epochs: 10                  # PPO update epochs
+  gamma: 0.98
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01                # encourage exploration during early training
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  device: "cpu"                 # MLP on GPU has the same launch-overhead penalty
+  policy_kwargs:
+    net_arch: [128, 128]
+  verbose: 1
+
+total_timesteps: 1000000        # 1M policy steps. With 1024 envs, ~1k updates.
+log_dir: "logs/tb_logs/pretrain_v0"
+checkpoint_dir: "logs/checkpoints/pretrain_v0"
+checkpoint_every_steps: 100000
+seed: 42

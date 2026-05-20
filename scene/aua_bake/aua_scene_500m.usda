@@ -1,0 +1,133 @@
+#usda 1.0
+(
+    customLayerData = {
+        dictionary cameraSettings = {
+            dictionary Front = {
+                double3 position = (5, 0, 0)
+                double radius = 5
+            }
+            dictionary Perspective = {
+                double3 position = (5, 5, 5)
+                double3 target = (3.9919744787402878, 12.107808443676202, 0.1561437184311103)
+            }
+            dictionary Right = {
+                double3 position = (0, -5, 0)
+                double radius = 5
+            }
+            dictionary Top = {
+                double3 position = (0, 0, 5)
+                double radius = 5
+            }
+            string boundCamera = "/OmniverseKit_Persp"
+        }
+        dictionary omni_layer = {
+            string authoring_layer = "./aua_scene_500m.usda"
+        }
+        dictionary renderSettings = {
+        }
+    }
+    defaultPrim = "AUA_Scene"
+    doc = """AUA scene at 500 m radius — fresh rebuild 2026-04-30.
+        Terrain    : 851-prim subset extracted from the 2 km terrain USD via subset_from_2km.py
+                     (re-baking 500 m from scratch produced visible tile artifacts;
+                      subsetting from the working 2 km USD preserves correct material
+                      bindings and renders cleanly).
+                     This file references the SLIM variant `aua_terrain_500m_active.usd`
+                     (10 MB, 851 active meshes only). The fat backup
+                     `aua_terrain_500m.usd` (123 MB, all 13,341 meshes with the 2 km
+                     extras deactivated) is kept on disk — repoint the reference there
+                     and reactivate Xforms if a 2 km extent is needed again.
+        Buildings  : OpenStreetMap polygons (614), extruded with per-building SRTM ground.
+                     SRTM is geoid-referenced (EGM96) but Google's terrain is ellipsoid-
+                     referenced (WGS84). The naive geoid offset is ~+30 m for Yerevan,
+                     but empirical sampling of building bottom vertices vs terrain z at
+                     the same (x,y) (n=2000, in AUA_world_500m.usd composition) gave a
+                     median residual of +11.24 m above the terrain at +30 m lift. Net
+                     calibrated lift: 30 − 11.24 = 18.76 m. Residual std ≈ 5 m comes
+                     from terrain-vs-SRTM disagreement at individual building locations.
+                     Tune further if buildings appear sunken/floating in your scene.
+    Origin = SITL home (40.192 N, 44.50446 E, alt-ref 1200 m), local ENU meters."""
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "AUA_Scene"
+{
+    def "Terrain" (
+        prepend references = @./aua_terrain_500m_active.usd@</AUA>
+    )
+    {
+    }
+
+    def Xform "Buildings" (
+        prepend references = @./aua_buildings_500m.usd@</AUA_Buildings>
+    )
+    {
+        double3 xformOp:translate = (0, 0, 18.76)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def "Render" (
+    hide_in_stage_window = true
+    no_delete = true
+)
+{
+    def "OmniverseKit"
+    {
+        def "HydraTextures" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            def RenderProduct "omni_kit_widget_viewport_ViewportTexture_0" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </OmniverseKit_Persp>
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:dlss:frameGeneration = 0
+                bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                bool omni:rtx:pt:lightcache:cached:dontResolveConflicts = 1
+                int omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                bool omni:rtx:scene:hydra:mdlMaterialWarmup = 1
+                uint omni:rtx:viewTile:limit = 4294967295
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+        }
+    }
+
+    def RenderSettings "OmniverseGlobalRenderSettings" (
+        prepend apiSchemas = ["OmniRtxSettingsGlobalRtAdvancedAPI_1", "OmniRtxSettingsGlobalPtAdvancedAPI_1"]
+        no_delete = true
+    )
+    {
+        rel products = </Render/OmniverseKit/HydraTextures/omni_kit_widget_viewport_ViewportTexture_0>
+    }
+
+    def "Vars"
+    {
+        def RenderVar "LdrColor" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            uniform string sourceName = "LdrColor"
+        }
+    }
+}
+
