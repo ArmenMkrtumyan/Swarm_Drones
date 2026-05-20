@@ -1,4 +1,4 @@
-my_drone_simulation/.drone_env
+tools/.drone_env
 swarm_optimization/.optim_env
 # hardware reference PDFs (large binaries, values already baked into constants.py)
 swarm_optimization/docs/camera_specs/
@@ -13,4 +13,5 @@ swarm_optimization/CLAUDE.md
 .pytest_cache/
 logs/
 reports/
+lab/swarm/2d_to_3d_maps/
 scene/_backup

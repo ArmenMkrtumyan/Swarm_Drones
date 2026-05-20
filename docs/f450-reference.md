@@ -18,6 +18,40 @@ Real-world F450 specs and community-measured flight times, used to sanity-check 
 | Companion | NVIDIA Jetson Nano | 178 g |
 | Total mass | - | 1.3 kg |
 
+## Landing gear
+
+Four white arched plastic legs spring from the four arm-base corners of the central plate and splay diagonally outward and down to a square 215 × 215 mm footprint. Matches the stock landing gear shipped with the Hawk's Work F450 kit (and the DJI Flame Wheel F450 — same airframe class). The kit's photo, used as the reference shape:
+
+```
+        narrow top mounts (~50 mm apart)
+              \    /
+               \  /
+                ||              <- arch top fixed to arm-base corner
+              /    \
+            /        \          <- arch bulges OUTWARD
+          /            \
+        /                \
+       o                  o     <- foot, ground contact
+       |<--   215 mm   -->|     <- foot-to-foot lateral
+                           total height: 150 mm
+```
+
+| Parameter | Value |
+|---|---|
+| Vertical drop (arch top → foot) | 150 mm |
+| Foot-to-foot lateral (front pair) | 215 mm |
+| Foot-to-foot longitudinal (left pair) | 215 mm |
+| Arch top XY in body frame | (±53, ±53) mm — at each arm-base corner |
+| Foot XY in body frame | (±107.5, ±107.5) mm |
+| Tube cross-section | 12 mm OD plastic |
+| Per-leg mass | ~5 g (URDF value, thin-walled plastic) |
+
+The arch curve bulges outward (away from body axis), with linear vertical drop in z and `xy(t) = splay · t · (2 − t)` outward parabolic bulge. Tangent at the top mount leans ~36° from vertical (matching the kit photo); tangent at the foot is vertical so the foot pad meets the ground squarely on landing.
+
+USD implementation: four tube-meshes (16 segments × 8 sides, 138 verts each) in `scene/hawks_work_f450_basefile/configuration/hawks_work_f450_basefile_base_F450scaled.usd` under `/visuals/*_leg_link/mesh_0/arch` (white material binding via `material_white`) and `/colliders/*_leg_link/mesh_0/arch` (`PhysicsCollisionAPI` + `MeshCollisionAPI` with `convexHull` approximation). Mass + inertia on each `*_leg_link` rigid body are unchanged from the original URDF cube-leg setup. The two skid links inherited from the URDF (`left_skid_link`, `right_skid_link`) are preserved as rigid bodies but their visuals are invisible and their collider geometry is removed — the kit doesn't ship horizontal skid rails.
+
+Drone world translate Z = **1.150 m** in `scene/AUA_world_500m.usd` so the foot center rests exactly on the launchpad top (world z = 1.000 m).
+
 ## Camera (STEEReoCAM Nano) — used to derive the sensor wedge
 
 Full datasheet + lens datasheet are in [`docs/camera_specs/`](camera_specs/). Key numbers, all cited from those documents:
