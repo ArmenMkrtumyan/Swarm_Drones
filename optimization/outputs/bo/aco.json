@@ -1,0 +1,376 @@
+{
+  "controller": "aco",
+  "n_trials": 30,
+  "wall_seconds": 554.8200011253357,
+  "best_value": 0.6141955561343878,
+  "best_params": {
+    "pheromone_weight": 0.9291023391501487,
+    "heuristic_weight": 3.61531015132784,
+    "evaporation_rate": 0.016457815046652557,
+    "target_search_radius": 6.298235387943153,
+    "attract_gain": 3.645375649128204,
+    "attract_damp_gain": 0.2894580321327092
+  },
+  "trials": [
+    {
+      "number": 0,
+      "value": 0.4891436382988041,
+      "params": {
+        "pheromone_weight": 1.1236203565420875,
+        "heuristic_weight": 5.728928685254539,
+        "evaporation_rate": 0.3686770314875885,
+        "target_search_radius": 10.18390181036444,
+        "attract_gain": 0.7161246859115125,
+        "attract_damp_gain": 0.07978542347074179
+      }
+    },
+    {
+      "number": 1,
+      "value": 0.5030413408182065,
+      "params": {
+        "pheromone_weight": 0.17425083650459838,
+        "heuristic_weight": 5.263968801762143,
+        "evaporation_rate": 0.3045463557541723,
+        "target_search_radius": 11.496870933552547,
+        "attract_gain": 0.5242693862597309,
+        "attract_damp_gain": 0.9138013915892862
+      }
+    },
+    {
+      "number": 2,
+      "value": 0.5322542381045472,
+      "params": {
+        "pheromone_weight": 2.497327922401265,
+        "heuristic_weight": 1.6678651087305187,
+        "evaporation_rate": 0.0990942339314793,
+        "target_search_radius": 5.200854118241206,
+        "attract_gain": 1.0074238942079328,
+        "attract_damp_gain": 0.2408207265453542
+      }
+    },
+    {
+      "number": 3,
+      "value": 0.5173177826477571,
+      "params": {
+        "pheromone_weight": 1.2958350559263474,
+        "heuristic_weight": 2.1017602710892307,
+        "evaporation_rate": 0.30980791841396593,
+        "target_search_radius": 4.673926327824502,
+        "attract_gain": 0.979748602933958,
+        "attract_damp_gain": 0.1498365454855079
+      }
+    },
+    {
+      "number": 4,
+      "value": 0.5376005220245207,
+      "params": {
+        "pheromone_weight": 1.3682099526511078,
+        "heuristic_weight": 4.818467787661575,
+        "evaporation_rate": 0.10784015325759627,
+        "target_search_radius": 9.170813260963339,
+        "attract_gain": 1.9560708142748475,
+        "attract_damp_gain": 0.05746499650110707
+      }
+    },
+    {
+      "number": 5,
+      "value": 0.5389625089047305,
+      "params": {
+        "pheromone_weight": 1.822634555704315,
+        "heuristic_weight": 1.4378826802801035,
+        "evaporation_rate": 0.041875280562786964,
+        "target_search_radius": 14.38662644704,
+        "attract_gain": 4.619575159813622,
+        "attract_damp_gain": 0.5632733481673016
+      }
+    },
+    {
+      "number": 6,
+      "value": 0.46076525606038493,
+      "params": {
+        "pheromone_weight": 0.9138413075201121,
+        "heuristic_weight": 1.0371966270351112,
+        "evaporation_rate": 0.34527418299095686,
+        "target_search_radius": 8.281829924875215,
+        "attract_gain": 0.6622290670049675,
+        "attract_damp_gain": 0.2203992019084621
+      }
+    },
+    {
+      "number": 7,
+      "value": 0.564079258185401,
+      "params": {
+        "pheromone_weight": 0.10316556334565519,
+        "heuristic_weight": 5.501262211433302,
+        "evaporation_rate": 0.13680219098400828,
+        "target_search_radius": 10.950267412247783,
+        "attract_gain": 1.0248990260475088,
+        "attract_damp_gain": 0.2374619881840204
+      }
+    },
+    {
+      "number": 8,
+      "value": 0.5484143437236862,
+      "params": {
+        "pheromone_weight": 1.640130838029839,
+        "heuristic_weight": 1.5166995053903987,
+        "evaporation_rate": 0.4850964676046337,
+        "target_search_radius": 12.301593880333375,
+        "attract_gain": 4.349796564256659,
+        "attract_damp_gain": 0.7297384471483422
+      }
+    },
+    {
+      "number": 9,
+      "value": 0.45424070410422557,
+      "params": {
+        "pheromone_weight": 1.7936999364332555,
+        "heuristic_weight": 5.570308292627143,
+        "evaporation_rate": 0.05336132600544055,
+        "target_search_radius": 5.351794349029742,
+        "attract_gain": 0.5548777280551549,
+        "attract_damp_gain": 0.13250568853729486
+      }
+    },
+    {
+      "number": 10,
+      "value": 0.5704756335100974,
+      "params": {
+        "pheromone_weight": 0.06154178550972922,
+        "heuristic_weight": 3.6326401521906253,
+        "evaporation_rate": 0.1906770986333377,
+        "target_search_radius": 7.1622106968794625,
+        "attract_gain": 2.04068997780618,
+        "attract_damp_gain": 0.3953685786954512
+      }
+    },
+    {
+      "number": 11,
+      "value": 0.5949647219290907,
+      "params": {
+        "pheromone_weight": 0.045380447740153894,
+        "heuristic_weight": 3.9324593994480086,
+        "evaporation_rate": 0.1859243233176449,
+        "target_search_radius": 7.2814002625206395,
+        "attract_gain": 1.8832857726769299,
+        "attract_damp_gain": 0.4036367863069025
+      }
+    },
+    {
+      "number": 12,
+      "value": 0.6034105527791888,
+      "params": {
+        "pheromone_weight": 0.5772147881177004,
+        "heuristic_weight": 3.8238663830888173,
+        "evaporation_rate": 0.2098801797657868,
+        "target_search_radius": 6.8194350014976965,
+        "attract_gain": 2.12675238872364,
+        "attract_damp_gain": 0.4053347229638129
+      }
+    },
+    {
+      "number": 13,
+      "value": 0.5909069494352794,
+      "params": {
+        "pheromone_weight": 0.6281751433409141,
+        "heuristic_weight": 3.56499187346296,
+        "evaporation_rate": 0.2150965941538395,
+        "target_search_radius": 3.3023541343514786,
+        "attract_gain": 2.9555216674978144,
+        "attract_damp_gain": 0.4255936568017782
+      }
+    },
+    {
+      "number": 14,
+      "value": 0.5933591003791525,
+      "params": {
+        "pheromone_weight": 0.6800516819726635,
+        "heuristic_weight": 4.275255739563553,
+        "evaporation_rate": 0.23608289081881045,
+        "target_search_radius": 7.113591459195796,
+        "attract_gain": 1.4335529108015397,
+        "attract_damp_gain": 0.3690426481950252
+      }
+    },
+    {
+      "number": 15,
+      "value": 0.5856415875312591,
+      "params": {
+        "pheromone_weight": 0.5780874232406493,
+        "heuristic_weight": 2.7143543579244787,
+        "evaporation_rate": 0.1751769184793583,
+        "target_search_radius": 6.9669560158239126,
+        "attract_gain": 2.8112756413113678,
+        "attract_damp_gain": 0.5905735916641072
+      }
+    },
+    {
+      "number": 16,
+      "value": 0.5454975658251178,
+      "params": {
+        "pheromone_weight": 0.44225174723475,
+        "heuristic_weight": 4.263754254735165,
+        "evaporation_rate": 0.42852148732043205,
+        "target_search_radius": 8.823758266072268,
+        "attract_gain": 1.5632341183524376,
+        "attract_damp_gain": 0.3124772913631007
+      }
+    },
+    {
+      "number": 17,
+      "value": 0.5940078899648743,
+      "params": {
+        "pheromone_weight": 2.558605321482833,
+        "heuristic_weight": 2.7517099804857943,
+        "evaporation_rate": 0.2604164838075396,
+        "target_search_radius": 5.99386879435176,
+        "attract_gain": 3.0190868086388294,
+        "attract_damp_gain": 0.5405395291019676
+      }
+    },
+    {
+      "number": 18,
+      "value": 0.5850361481838803,
+      "params": {
+        "pheromone_weight": 0.3661283263099439,
+        "heuristic_weight": 4.26990480003914,
+        "evaporation_rate": 0.1536723951668043,
+        "target_search_radius": 7.8037685065856515,
+        "attract_gain": 2.288713986765083,
+        "attract_damp_gain": 0.16253067920545877
+      }
+    },
+    {
+      "number": 19,
+      "value": 0.5520467709302309,
+      "params": {
+        "pheromone_weight": 2.1178164070914756,
+        "heuristic_weight": 3.008813111529118,
+        "evaporation_rate": 0.27348987126328045,
+        "target_search_radius": 3.1158657749497594,
+        "attract_gain": 1.357019379176033,
+        "attract_damp_gain": 0.8526908714665963
+      }
+    },
+    {
+      "number": 20,
+      "value": 0.6141955561343878,
+      "params": {
+        "pheromone_weight": 0.9291023391501487,
+        "heuristic_weight": 3.61531015132784,
+        "evaporation_rate": 0.016457815046652557,
+        "target_search_radius": 6.298235387943153,
+        "attract_gain": 3.645375649128204,
+        "attract_damp_gain": 0.2894580321327092
+      }
+    },
+    {
+      "number": 21,
+      "value": 0.5856875770514347,
+      "params": {
+        "pheromone_weight": 0.9421136512967265,
+        "heuristic_weight": 3.7006769178439525,
+        "evaporation_rate": 0.02615680502676499,
+        "target_search_radius": 6.138654949882394,
+        "attract_gain": 3.69813278436794,
+        "attract_damp_gain": 0.2975312840137046
+      }
+    },
+    {
+      "number": 22,
+      "value": 0.5984061600975947,
+      "params": {
+        "pheromone_weight": 0.866195983791691,
+        "heuristic_weight": 4.710509093267341,
+        "evaporation_rate": 0.1057084424139181,
+        "target_search_radius": 4.012993402229318,
+        "attract_gain": 2.616988214232882,
+        "attract_damp_gain": 0.46743187708693
+      }
+    },
+    {
+      "number": 23,
+      "value": 0.6076694031665778,
+      "params": {
+        "pheromone_weight": 0.9237116406900857,
+        "heuristic_weight": 4.765946343654967,
+        "evaporation_rate": 0.07894544322862695,
+        "target_search_radius": 4.233896431539294,
+        "attract_gain": 3.398929344329667,
+        "attract_damp_gain": 0.1885536071752128
+      }
+    },
+    {
+      "number": 24,
+      "value": 0.5838016888708503,
+      "params": {
+        "pheromone_weight": 2.9738315884307975,
+        "heuristic_weight": 4.8272944153529345,
+        "evaporation_rate": 0.05943082261963231,
+        "target_search_radius": 4.274741062053639,
+        "attract_gain": 3.5992451837564645,
+        "attract_damp_gain": 0.11720095135754881
+      }
+    },
+    {
+      "number": 25,
+      "value": 0.5919024814382022,
+      "params": {
+        "pheromone_weight": 1.1526885411233967,
+        "heuristic_weight": 3.2164071608180813,
+        "evaporation_rate": 0.08215806623673017,
+        "target_search_radius": 6.1069051575513225,
+        "attract_gain": 3.6954044166453555,
+        "attract_damp_gain": 0.1987663415116983
+      }
+    },
+    {
+      "number": 26,
+      "value": 0.554098596136709,
+      "params": {
+        "pheromone_weight": 0.7292040735714417,
+        "heuristic_weight": 2.418406444571877,
+        "evaporation_rate": 0.014605588152351016,
+        "target_search_radius": 5.419189896045081,
+        "attract_gain": 2.418697165097962,
+        "attract_damp_gain": 0.10529041877721557
+      }
+    },
+    {
+      "number": 27,
+      "value": 0.6022369194841551,
+      "params": {
+        "pheromone_weight": 1.0867307835228832,
+        "heuristic_weight": 4.571362391154051,
+        "evaporation_rate": 0.1405747173037922,
+        "target_search_radius": 3.843732939676609,
+        "attract_gain": 3.327515271313588,
+        "attract_damp_gain": 0.17517894022456607
+      }
+    },
+    {
+      "number": 28,
+      "value": 0.6041245991612118,
+      "params": {
+        "pheromone_weight": 0.3588964277270198,
+        "heuristic_weight": 3.947902098804446,
+        "evaporation_rate": 0.0771673099615653,
+        "target_search_radius": 9.504497039717618,
+        "attract_gain": 4.866367704731075,
+        "attract_damp_gain": 0.30513544690237254
+      }
+    },
+    {
+      "number": 29,
+      "value": 0.6014768797236915,
+      "params": {
+        "pheromone_weight": 0.33361550365464243,
+        "heuristic_weight": 5.9860840566453515,
+        "evaporation_rate": 0.07225614909742858,
+        "target_search_radius": 9.838865707556884,
+        "attract_gain": 4.805498527419558,
+        "attract_damp_gain": 0.2737264218659519
+      }
+    }
+  ]
+}

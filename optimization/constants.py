@@ -23,9 +23,18 @@ from pathlib import Path
 # Project paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
-OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-IMAGES_DIR = OUTPUTS_DIR / "images"
-MAPS_DIR = OUTPUTS_DIR / "maps"
+OUTPUTS_DIR       = PROJECT_ROOT / "outputs"
+MAPS_DIR          = PROJECT_ROOT / "maps"           # saved test maps (open_33, partial_33, closed_33)
+PLOTS_DIR         = OUTPUTS_DIR / "png"             # scratch PNG figures from demo.py
+DATA_DIR          = OUTPUTS_DIR / "csv_txt"         # raw data tables (.csv) and ranked-top summaries
+
+# Per-track archived result directories.
+# Sweep scripts write new runs here with a `_new` suffix so old benchmarks
+# are preserved until you're ready to promote the new results.
+CLASSICAL_DIR     = OUTPUTS_DIR / "classical"
+METAHEURISTIC_DIR = OUTPUTS_DIR / "metaheuristic"
+CONTROL_BASED_DIR = OUTPUTS_DIR / "control_based"
+MARL_DIR          = CONTROL_BASED_DIR / "marl"     # PPO checkpoint .zip files
 
 # ---------------------------------------------------------------------------
 # Visual styling (used by visualize.py and editor.py)

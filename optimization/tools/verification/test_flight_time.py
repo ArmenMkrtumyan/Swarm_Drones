@@ -36,7 +36,7 @@ overhead, so for 1.3 kg the model lands at the top of the 14-17 min hover
 range and the cutoff trips ~2 min below the lower bound — physics is correct,
 calibration is conservative-by-design.
 
-Usage:  python verification_scripts/test_flight_time.py
+Usage:  python tools/verification/test_flight_time.py
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import numpy as np
 
@@ -318,7 +318,7 @@ def run_gui() -> None:
         sys.exit(1)
 
     # Internal renderers — our own private helpers, fine to call from a verification rig.
-    from visualize import (
+    from tools.visualize import (
         _render_battery_panel,
         _render_map,
         format_duration,

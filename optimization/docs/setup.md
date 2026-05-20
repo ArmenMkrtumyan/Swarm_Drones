@@ -100,7 +100,7 @@ The simulation runs until one of two natural terminal conditions is reached:
 
 **To compress wall-clock time on a long run, use the speed slider in the GUI window** (1× / 2× / 5× / 10× / 20×, bottom of the figure). It controls how many `env.step()` calls happen between renders — each step still uses the same `step_seconds = 0.1` and the same physics, so the simulation is bit-identical regardless of slider value. At 20× a 12-minute hover plays in ~36 s real time.
 
-For verification scripts (separate from demos), see [verification.md](verification.md).
+For verification scripts (separate from demos), see the Quickstart section in [README.md](../README.md).
 
 ---
 

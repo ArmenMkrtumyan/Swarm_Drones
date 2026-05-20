@@ -1,0 +1,4 @@
+policy,coverage_pct,time_to_100_s,time_to_80_s,energy_kJ,overlap_m2,wasted_visits,completion_rate,n_runs
+PF,92.87,438.96,211.47,411.14,8249.31,3378.53,0.64,36
+Consensus,84.92,469.16,290.48,458.64,5824.31,2043.03,0.58,36
+MARL,94.62,826.0,169.81,757.94,14577.78,9231.08,0.22,36

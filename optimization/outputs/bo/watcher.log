@@ -1,0 +1,42 @@
+BO_ALL_DONE
+Tue May 12 22:35:58 +04 2026
+
+[bo_all] [5/12] stc — starting (30 trials)
+[bo_all] [5/12] stc — best=+0.6433 in 736.6s
+
+[bo_all] [6/12] pso — starting (30 trials)
+[bo_all] [6/12] pso — best=+0.6033 in 800.9s
+
+[bo_all] [7/12] ga — starting (30 trials)
+[bo_all] [7/12] ga — best=+0.6453 in 561.4s
+
+[bo_all] [8/12] sa — starting (30 trials)
+[bo_all] [8/12] sa — best=+0.6453 in 525.1s
+
+[bo_all] [9/12] aco — starting (30 trials)
+[bo_all] [9/12] aco — best=+0.6142 in 554.8s
+
+[bo_all] [10/12] gwo — starting (30 trials)
+[bo_all] [10/12] gwo — best=+0.2475 in 986.9s
+
+[bo_all] [11/12] pf — starting (30 trials)
+[bo_all] [11/12] pf — best=+0.5923 in 663.1s
+
+[bo_all] [12/12] consensus — starting (30 trials)
+[bo_all] [12/12] consensus — best=+0.6188 in 731.5s
+
+[bo_all] ALL DONE in 8570.3s (142.8 min)
+
+[bo_all] best scores (sorted):
+  voronoi          +0.6711   (wall:  831.5s)
+  sa               +0.6453   (wall:  525.1s)
+  ga               +0.6453   (wall:  561.4s)
+  stc              +0.6433   (wall:  736.6s)
+  grid_decomp      +0.6365   (wall:  776.3s)
+  consensus        +0.6188   (wall:  731.5s)
+  aco              +0.6142   (wall:  554.8s)
+  pso              +0.6033   (wall:  800.9s)
+  pf               +0.5923   (wall:  663.1s)
+  boustrophedon    +0.5566   (wall:  724.9s)
+  spiral           +0.5292   (wall:  677.3s)
+  gwo              +0.2475   (wall:  986.9s)

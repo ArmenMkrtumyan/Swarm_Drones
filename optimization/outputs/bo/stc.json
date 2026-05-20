@@ -1,0 +1,345 @@
+{
+  "controller": "stc",
+  "n_trials": 30,
+  "wall_seconds": 736.5752289295197,
+  "best_value": 0.6433494120371714,
+  "best_params": {
+    "attract_gain": 2.490044496522669,
+    "attract_damp_gain": 0.6622844704523333,
+    "drone_repel_gain": 4.1008641043865,
+    "drone_repel_range": 2.043956756975085,
+    "wall_repel_gain": 1.93371890796805
+  },
+  "trials": [
+    {
+      "number": 0,
+      "value": 0.6202829688816676,
+      "params": {
+        "attract_gain": 2.178930765977573,
+        "attract_damp_gain": 0.8627358286640178,
+        "drone_repel_gain": 10.790061933340453,
+        "drone_repel_range": 4.394633936788146,
+        "wall_repel_gain": 0.7161246859115125
+      }
+    },
+    {
+      "number": 1,
+      "value": 0.5459356364724313,
+      "params": {
+        "attract_gain": 1.3831748681407512,
+        "attract_damp_gain": 0.05950295391592123,
+        "drone_repel_gain": 14.696236810540892,
+        "drone_repel_range": 4.404460046972835,
+        "wall_repel_gain": 2.5529516046973773
+      }
+    },
+    {
+      "number": 2,
+      "value": 0.624145210216254,
+      "params": {
+        "attract_gain": 1.0437335666720515,
+        "attract_damp_gain": 0.9138013915892862,
+        "drone_repel_gain": 13.597924843182254,
+        "drone_repel_range": 2.8493564427131046,
+        "wall_repel_gain": 0.7599674150654903
+      }
+    },
+    {
+      "number": 3,
+      "value": 0.5755695869567633,
+      "params": {
+        "attract_gain": 1.4643024075185014,
+        "attract_damp_gain": 0.12439367209907215,
+        "drone_repel_gain": 6.695552617031865,
+        "drone_repel_range": 3.727780074568463,
+        "wall_repel_gain": 0.9776854331372623
+      }
+    },
+    {
+      "number": 4,
+      "value": 0.6005322057920827,
+      "params": {
+        "attract_gain": 3.5690959437712713,
+        "attract_damp_gain": 0.07593739613361232,
+        "drone_repel_gain": 3.9189944117358317,
+        "drone_repel_range": 3.465447373174767,
+        "wall_repel_gain": 1.4290255329034678
+      }
+    },
+    {
+      "number": 5,
+      "value": 0.6151129854536102,
+      "params": {
+        "attract_gain": 5.117814598236952,
+        "attract_damp_gain": 0.09093929525644105,
+        "drone_repel_gain": 6.535283531563522,
+        "drone_repel_range": 4.36965827544817,
+        "wall_repel_gain": 0.5564426587452863
+      }
+    },
+    {
+      "number": 6,
+      "value": 0.5863227044849696,
+      "params": {
+        "attract_gain": 3.5372656148130304,
+        "attract_damp_gain": 0.0833349164303321,
+        "drone_repel_gain": 2.3231731978492904,
+        "drone_repel_range": 5.7955421490133325,
+        "wall_repel_gain": 4.619575159813622
+      }
+    },
+    {
+      "number": 7,
+      "value": 0.6144785717523512,
+      "params": {
+        "attract_gain": 5.371004924854033,
+        "attract_damp_gain": 0.12453219846912196,
+        "drone_repel_gain": 2.5043908574120777,
+        "drone_repel_range": 4.736932106048627,
+        "wall_repel_gain": 1.377597982475538
+      }
+    },
+    {
+      "number": 8,
+      "value": 0.5982713733731999,
+      "params": {
+        "attract_gain": 1.2888771013236346,
+        "attract_damp_gain": 0.2203992019084621,
+        "drone_repel_gain": 2.164803676300191,
+        "drone_repel_range": 5.637281608315128,
+        "wall_repel_gain": 0.9072980676745123
+      }
+    },
+    {
+      "number": 9,
+      "value": 0.6138152238577245,
+      "params": {
+        "attract_gain": 3.965676111103477,
+        "attract_damp_gain": 0.12720830454691837,
+        "drone_repel_gain": 6.62365977614476,
+        "drone_repel_range": 4.186841117373119,
+        "wall_repel_gain": 0.7652872182750088
+      }
+    },
+    {
+      "number": 10,
+      "value": 0.6367761135711741,
+      "params": {
+        "attract_gain": 2.2317255800067493,
+        "attract_damp_gain": 0.8174488090219237,
+        "drone_repel_gain": 18.6452025852496,
+        "drone_repel_range": 2.118421668094785,
+        "wall_repel_gain": 2.2430376072276923
+      }
+    },
+    {
+      "number": 11,
+      "value": 0.6120515796999287,
+      "params": {
+        "attract_gain": 2.2342564479148104,
+        "attract_damp_gain": 0.9544570745321449,
+        "drone_repel_gain": 19.091502368054595,
+        "drone_repel_range": 2.1592692156932873,
+        "wall_repel_gain": 2.7376350282328765
+      }
+    },
+    {
+      "number": 12,
+      "value": 0.5447115360917404,
+      "params": {
+        "attract_gain": 1.0700625714969492,
+        "attract_damp_gain": 0.5107435297521193,
+        "drone_repel_gain": 12.051530831484483,
+        "drone_repel_range": 2.119472561740763,
+        "wall_repel_gain": 2.361280591799687
+      }
+    },
+    {
+      "number": 13,
+      "value": 0.6057150366438087,
+      "params": {
+        "attract_gain": 1.9958907174572171,
+        "attract_damp_gain": 0.4908075742507761,
+        "drone_repel_gain": 19.950234529259756,
+        "drone_repel_range": 2.876527286025467,
+        "wall_repel_gain": 1.7823633542838182
+      }
+    },
+    {
+      "number": 14,
+      "value": 0.5309727993457498,
+      "params": {
+        "attract_gain": 1.7794777440349077,
+        "attract_damp_gain": 0.5344057218615995,
+        "drone_repel_gain": 10.297311199733192,
+        "drone_repel_range": 2.88039492794135,
+        "wall_repel_gain": 4.599615599491824
+      }
+    },
+    {
+      "number": 15,
+      "value": 0.6258395263595872,
+      "params": {
+        "attract_gain": 7.449190857406519,
+        "attract_damp_gain": 0.3168760404117698,
+        "drone_repel_gain": 13.742534461296104,
+        "drone_repel_range": 2.750130525733469,
+        "wall_repel_gain": 0.5038008173205971
+      }
+    },
+    {
+      "number": 16,
+      "value": 0.6059493775289803,
+      "params": {
+        "attract_gain": 7.989400854982044,
+        "attract_damp_gain": 0.3096384151601762,
+        "drone_repel_gain": 8.66414922334693,
+        "drone_repel_range": 2.664145436328723,
+        "wall_repel_gain": 3.4910020677232327
+      }
+    },
+    {
+      "number": 17,
+      "value": 0.6254998584798641,
+      "params": {
+        "attract_gain": 7.96725024874381,
+        "attract_damp_gain": 0.278659891348024,
+        "drone_repel_gain": 16.719321172653395,
+        "drone_repel_range": 3.4014667875682356,
+        "wall_repel_gain": 0.5036131093406543
+      }
+    },
+    {
+      "number": 18,
+      "value": 0.6399301143234359,
+      "params": {
+        "attract_gain": 2.5257396129711314,
+        "attract_damp_gain": 0.358243420514392,
+        "drone_repel_gain": 4.724811395974329,
+        "drone_repel_range": 2.440124750490062,
+        "wall_repel_gain": 2.0576489342559503
+      }
+    },
+    {
+      "number": 19,
+      "value": 0.6433494120371714,
+      "params": {
+        "attract_gain": 2.490044496522669,
+        "attract_damp_gain": 0.6622844704523333,
+        "drone_repel_gain": 4.1008641043865,
+        "drone_repel_range": 2.043956756975085,
+        "wall_repel_gain": 1.93371890796805
+      }
+    },
+    {
+      "number": 20,
+      "value": 0.6338400106569216,
+      "params": {
+        "attract_gain": 2.8839385388126244,
+        "attract_damp_gain": 0.2008466251713489,
+        "drone_repel_gain": 4.048314583308316,
+        "drone_repel_range": 2.426150149862418,
+        "wall_repel_gain": 1.8079794818847517
+      }
+    },
+    {
+      "number": 21,
+      "value": 0.6303389468973263,
+      "params": {
+        "attract_gain": 2.5808417067929406,
+        "attract_damp_gain": 0.6183520094833505,
+        "drone_repel_gain": 4.246282315759072,
+        "drone_repel_range": 2.022016681693193,
+        "wall_repel_gain": 2.1346085123255127
+      }
+    },
+    {
+      "number": 22,
+      "value": 0.6235452736877812,
+      "params": {
+        "attract_gain": 2.9767787370249423,
+        "attract_damp_gain": 0.6883115277349181,
+        "drone_repel_gain": 3.1995678507379184,
+        "drone_repel_range": 2.3914593952270087,
+        "wall_repel_gain": 2.925376172049048
+      }
+    },
+    {
+      "number": 23,
+      "value": 0.6252054695603199,
+      "params": {
+        "attract_gain": 1.7258330852826436,
+        "attract_damp_gain": 0.3918360066441184,
+        "drone_repel_gain": 5.317311512923542,
+        "drone_repel_range": 3.261507431418376,
+        "wall_repel_gain": 1.2809727052351563
+      }
+    },
+    {
+      "number": 24,
+      "value": 0.6256979647291616,
+      "params": {
+        "attract_gain": 2.6937091014277543,
+        "attract_damp_gain": 0.3985230378619141,
+        "drone_repel_gain": 5.281729827948777,
+        "drone_repel_range": 2.389513196798698,
+        "wall_repel_gain": 1.9892019452624956
+      }
+    },
+    {
+      "number": 25,
+      "value": 0.600335846844328,
+      "params": {
+        "attract_gain": 2.4592814182448266,
+        "attract_damp_gain": 0.7072331718471285,
+        "drone_repel_gain": 2.961360465420533,
+        "drone_repel_range": 3.114426829147836,
+        "wall_repel_gain": 3.252088163842493
+      }
+    },
+    {
+      "number": 26,
+      "value": 0.6114974844074959,
+      "params": {
+        "attract_gain": 1.7360223973542008,
+        "attract_damp_gain": 0.3851279411565315,
+        "drone_repel_gain": 8.11607127188918,
+        "drone_repel_range": 5.2661410720421475,
+        "wall_repel_gain": 1.1434759520237117
+      }
+    },
+    {
+      "number": 27,
+      "value": 0.6344635404656886,
+      "params": {
+        "attract_gain": 3.204396804021006,
+        "attract_damp_gain": 0.6567100621137473,
+        "drone_repel_gain": 5.036168495954783,
+        "drone_repel_range": 2.4510838484877833,
+        "wall_repel_gain": 3.7231599373050623
+      }
+    },
+    {
+      "number": 28,
+      "value": 0.6323976353053063,
+      "params": {
+        "attract_gain": 2.072546413540209,
+        "attract_damp_gain": 0.17483525675436523,
+        "drone_repel_gain": 3.4556034349757434,
+        "drone_repel_range": 2.0067742264060877,
+        "wall_repel_gain": 1.64559352386516
+      }
+    },
+    {
+      "number": 29,
+      "value": 0.6404518177068858,
+      "params": {
+        "attract_gain": 4.486943953848943,
+        "attract_damp_gain": 0.787243294946275,
+        "drone_repel_gain": 4.716086868376182,
+        "drone_repel_range": 3.7855950512806853,
+        "wall_repel_gain": 2.1577112564594314
+      }
+    }
+  ]
+}

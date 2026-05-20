@@ -34,8 +34,8 @@ from the interpolated F450 hover endurance × translational-lift cruise gain.
 See `docs/f450-reference.md` "Cruise (forward flight)" for the derivation.
 
 Usage:
-  python verification_scripts/test_distance.py            # headless asserts
-  python verification_scripts/test_distance.py --gui      # live distance counter
+  python tools/verification/test_distance.py            # headless asserts
+  python tools/verification/test_distance.py --gui      # live distance counter
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ import math
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import numpy as np
 
@@ -383,7 +383,7 @@ def run_gui() -> None:
     from matplotlib.animation import FuncAnimation
     from matplotlib.widgets import Slider
 
-    from visualize import (
+    from tools.visualize import (
         _render_battery_panel,
         _render_map,
         format_duration,

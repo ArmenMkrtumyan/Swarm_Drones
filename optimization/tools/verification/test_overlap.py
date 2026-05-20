@@ -22,8 +22,8 @@ makes "tile entered" = "cell entered", giving us hand-computable expectations):
            previous trail (self-revisit).
 
 Run modes:
-  python tools/test_overlap.py            # headless: writes 4 PNGs, asserts counts
-  python tools/test_overlap.py --gui      # live animation: watch metrics tick up
+  python tools/verification/test_overlap.py            # headless: writes 4 PNGs, asserts counts
+  python tools/verification/test_overlap.py --gui      # live animation: watch metrics tick up
 """
 
 from __future__ import annotations
@@ -32,14 +32,14 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import numpy as np
 
-from constants import IMAGES_DIR
+from constants import PLOTS_DIR
 from environment import CoverageEnv, DroneConfig, SimConfig
 from maze import FREE, WALL
-from visualize import init_drone_palette, render_frame
+from tools.visualize import init_drone_palette, render_frame
 
 
 def _clear_coverage_state(env: CoverageEnv) -> None:
@@ -153,7 +153,7 @@ def _scripted_steps():
 
 def run_headless(env: CoverageEnv) -> bool:
     """Original PNG-and-assertions mode. Returns True iff every check passed."""
-    out_dir = IMAGES_DIR
+    out_dir = PLOTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     render_frame(env, save_path=str(out_dir / "test_overlap_00_initial.png"))
     _print_metrics(env, "Phase 0 — initial placement")
@@ -236,7 +236,7 @@ def run_gui(env: CoverageEnv) -> None:
 
     # Internal renderers — they're prefixed with "_" but they're our own code,
     # not third-party. The test rig is a legitimate caller.
-    from visualize import _make_figure, _render_battery_panel, _render_map
+    from tools.visualize import _make_figure, _render_battery_panel, _render_map
 
     fig, ax_map, ax_panel = _make_figure(env)
     # Reserve room at the top for fig.suptitle (the phase label can be ~80
