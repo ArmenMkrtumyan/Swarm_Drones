@@ -16,7 +16,7 @@ acceleration to ``env.step()`` — that makes ``new_vel = old_vel + 0 = target``
 and avoids wall-collision velocity zeroing. Coverage tracking still runs but
 isn't asserted (different verification).
 
-Reference flight times (from real-world sources, see optimization/README.md
+Reference flight times (from real-world sources, see swarm_optimization/README.md
 "Reference F450 flight times"):
 
   Battery       | Payload | Hover time
@@ -27,7 +27,7 @@ Reference flight times (from real-world sources, see optimization/README.md
   3S 2200 mAh   | light   | ~10 min
 
 Our model derives `P_hover` from `DroneConfig.mass_kg` via momentum theory at
-env-construction (see docs/battery-model.md "Mass-aware hover power"). The
+env-construction (see ../../../docs/battery-model.md "Mass-aware hover power"). The
 default 1.3 kg F450 build evaluates to ≈165 W, giving 17.0 min to an empty
 pack and 12.2 min to the 10 V cutoff (~28% reserve). The figure-of-merit was
 calibrated so that 1.3 kg yields the F450 community-data midpoint; the
@@ -215,21 +215,21 @@ def run_headless() -> bool:
     # --- Sanity check: model output vs community-data bounds.
     # The model itself computes hover/cruise endurance directly via
     #   t = E_spendable / (P_hover(m) + k·v²)
-    # using mass-aware P_hover from momentum theory (see docs/battery-model.md
+    # using mass-aware P_hover from momentum theory (see ../../../docs/battery-model.md
     # → "Mass-aware hover power"). The bounds below are informational only —
     # they tell us how the model lands relative to real-world expectations.
     hover_min = _expected_seconds(env, 0.0) / 60.0
     cruise_min = _expected_seconds(env, target_v) / 60.0
 
     # Hover: community-data range interpolated for 3S 4200 mAh + ~1.3 kg payload
-    # (see f450-reference.md "Hover time" → community sanity check). This is
+    # (see ../../../docs/f450-reference.md "Hover time" → community sanity check). This is
     # full-pack endurance; our cutoff number sits ~3 min below 14 min by design
     # (10 V cutoff trips with ~28 % reserve, so spendable < full-pack).
     HOVER_MIN_INFERRED = 14.0
     HOVER_MAX_INFERRED = 17.0
     # Cruise at 9.0 m/s (= max_speed): no F450-specific cruise-endurance
     # measurement is published, so we use hover-range × translational-lift
-    # gain [1.00 … 1.20] as a real-world bound (see f450-reference.md
+    # gain [1.00 … 1.20] as a real-world bound (see ../../../docs/f450-reference.md
     # "Cruise"). The sim's v² monotone model omits the translational-lift
     # dip on purpose, so cruise cutoff lands below this bound — the gap is
     # the pessimism we accept for a monotone-in-speed energy cost.
@@ -249,7 +249,7 @@ def run_headless() -> bool:
     print(f"  Bounds are informational; the model computes endurance directly.")
     print(f"  No F450-specific cruise-endurance measurement at a defined forward")
     print(f"  speed has been published, so the cruise bound uses hover-range ×")
-    print(f"  translational-lift gain [×1.00 … ×1.20] (see f450-reference.md → Cruise).")
+    print(f"  translational-lift gain [×1.00 … ×1.20] (see ../../../docs/f450-reference.md → Cruise).")
     print(f"  The hover cutoff sits below the community range because that range is")
     print(f"  full-pack endurance, while cutoff trips with ~28 % reserve. The cruise")
     print(f"  cutoff sits below the bound because the v² model omits the lift dip;")
@@ -425,7 +425,7 @@ def run_gui() -> None:
             # crowding. Hover and cruise numbers are from the model's direct
             # calculation; the reference ranges are community-data sanity
             # checks (hover from interpolation, cruise from hover ×
-            # translational-lift gain) — see f450-reference.md "Cruise" for
+            # translational-lift gain) — see ../../../docs/f450-reference.md "Cruise" for
             # the bound derivation.
             fig.suptitle(
                 f"DONE  ✓  hover: {format_duration(state['hover_time_s'])}  |  "

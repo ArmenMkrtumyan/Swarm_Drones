@@ -8,7 +8,8 @@ Bridge between Isaac Sim and ArduPilot SITL for the F450 capstone, plus the `cap
 - `capstone/` — stage gates, disturbance profiles, metrics, mission runner.
 - `sitl_params/` — ArduCopter SITL param files; `sitl_params_test.parm` is the active one loaded by the WSL launch command.
 - `scene/` — drone USDs and AUA world (`AUA_world_500m.usd` + `aua_bake/`). See **Heavy assets** below for the textures download.
-- `optimization/` — tuning experiments.
+- `swarm_optimization/` — 2D swarm coverage testbed and benchmarking experiments (see [`swarm_optimization/README.md`](swarm_optimization/README.md)).
+- `docs/` — hardware reference docs shared across all sub-projects: [`f450-reference.md`](docs/f450-reference.md) (F450 specs, motor convention, flight-time data), [`battery-model.md`](docs/battery-model.md) (energy model, 3S/4S battery options).
 
 ## Heavy assets (not in git)
 
@@ -65,3 +66,30 @@ Tools/autotest/sim_vehicle.py -v ArduCopter -f X -N -w \
   --map --console \
   --out=udp:127.0.0.1:14551
 ```
+
+---
+
+## Swarm coverage optimization (`swarm_optimization/`)
+
+A NumPy + matplotlib 2D testbed for evaluating swarm coverage algorithms against the same F450-calibrated physics model used in Isaac. Algorithms are benchmarked on three maps (open / partial / dense obstacles, 33×33 cells at 5 m/cell) across 4 swarm sizes × 3 seeds = 36 runs each.
+
+Three research tracks were implemented and fully benchmarked:
+
+| Track | Family | Winner |
+|---|---|---|
+| 1 | Classical geometry-based (Boustrophedon, Spiral, VoronoiPartition, GridDecomposition, STC) | **VoronoiPartition** |
+| 2 | Metaheuristic (PSO, GA, ACO, SA, GWO) | **SA** (98.0 % mean coverage) |
+| 3 | Learning / control-based (Potential Fields, Consensus, MARL PPO) | **MARL** on hardest map×swarm cell |
+
+All configs tuned via **Bayesian Optimization** (Optuna TPE, 30 trials each). Cross-track leaderboards and per-algorithm CSVs live in `swarm_optimization/outputs/leaderboards/`.
+
+**Quick start:**
+
+```bash
+cd swarm_optimization
+python3 -m venv .optim_env && source .optim_env/bin/activate
+pip install -r requirements.txt
+python3 tools/demo.py --gui --policy voronoi --drones 5 --map-file maps/open_33.npy --all-active --seed 1
+```
+
+Full documentation in [`swarm_optimization/README.md`](swarm_optimization/README.md).

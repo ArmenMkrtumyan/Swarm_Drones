@@ -1,12 +1,12 @@
 my_drone_simulation/.drone_env
-optimization/.optim_env
+swarm_optimization/.optim_env
 # hardware reference PDFs (large binaries, values already baked into constants.py)
-optimization/docs/camera_specs/
+swarm_optimization/docs/camera_specs/
 # scratch demo images (always overwritten by demo.py)
-optimization/outputs/png/
+swarm_optimization/outputs/png/
 # new-run benchmark outputs (review before promoting to archived versions)
-optimization/outputs/**/*_new*
-optimization/CLAUDE.md
+swarm_optimization/outputs/**/*_new*
+swarm_optimization/CLAUDE.md
 **/__pycache__/
 .claude/
 .cursor/

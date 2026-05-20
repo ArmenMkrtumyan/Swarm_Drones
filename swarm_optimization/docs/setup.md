@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-cd ~/Desktop/Swarm_Drones/optimization
+cd ~/Desktop/Swarm_Drones/swarm_optimization
 
 # First time only:
 python3 -m venv .optim_env

@@ -22,7 +22,7 @@ import numpy as np
 from maze import FREE, WALL, random_free_positions
 
 
-# STEEReoCAM Nano camera spec (per `optimization/docs/camera_specs/`):
+# STEEReoCAM Nano camera spec (per `swarm_optimization/docs/camera_specs/`):
 #     HFOV = 54°, VFOV = 49.5°, DFOV = 77.9°
 #     Stereo depth range = 0.95 – 8 m (beyond 8 m, depth quality degrades)
 #     Sensor: 2× OV2311, 100 mm baseline, 1600×1300 per eye, 30 fps stereo
@@ -105,7 +105,7 @@ class DroneConfig:
     # for `k = 13`) — chosen for a coverage mission rather than racing.
     # Bumping `mass_kg` does NOT auto-rescale `max_speed`; the user should adjust
     # if their build is significantly lighter or heavier (1.0 kg → ~8 m/s sweet
-    # spot; 1.8 kg → ~11 m/s). See docs/f450-reference.md → "Default `max_speed`".
+    # spot; 1.8 kg → ~11 m/s). See ../docs/f450-reference.md → "Default `max_speed`".
     max_speed: float = 1.8                             # cells / second (= 9.0 m/s at 5 m/cell)
     max_accel: float = 2.5                             # cells / second² (= 12.5 m/s² ≈ 1.3 g at 5 m/cell;
                                                        # ~65–80 % of physical max √(T²−W²)/m at TWR ≈ 2:1
@@ -153,8 +153,8 @@ class DroneConfig:
     mass_kg: float = 1.3          # Hawk's Work F450 + Jetson Nano + STEEReoCAM + 3S LiPo.
                                   # USED by the energy model: BatteryConfig.hover_power_w
                                   # is derived from this via momentum theory unless
-                                  # explicitly set. See docs/f450-reference.md for the
-                                  # per-component breakdown and docs/battery-model.md
+                                  # explicitly set. See ../docs/f450-reference.md for the
+                                  # per-component breakdown and ../docs/battery-model.md
                                   # for the derivation.
 
     # Communication range, cells. Caps the radius within which a drone can see
@@ -229,7 +229,7 @@ class BatteryConfig:
         hover) into a single multiplier on the ideal-rotor formula. Defaults
         give ≈165 W at the F450's 1.3 kg total mass.
 
-        See `docs/battery-model.md → "Mass-aware hover power"` for the
+        See `../docs/battery-model.md → "Mass-aware hover power"` for the
         derivation, the FoM calibration story, and the regimes where the
         purely-induced approximation diverges from real measured data.
         """
@@ -528,7 +528,7 @@ class CoverageEnv:
             # ---- battery ----
             # Energy model: P_hover + k·|v|². Heading-independent. Yaw has its
             # own (small) energy cost in real flight via differential motor
-            # torque, but we don't include it — see docs/battery-model.md
+            # torque, but we don't include it — see ../docs/battery-model.md
             # *Why `v²` and not `v³`* / *Intentionally omitted* for the rationale.
             speed_sq = float(new_vel @ new_vel)
             power_w = (self.battery_cfg.hover_power_w

@@ -31,7 +31,7 @@ and the cell→meter conversion compounded over a full battery discharge.
 range depends on the builder's motors / props / battery choices. Our
 comparison range (7.6–11.0 km at 9.0 m/s, for our 1.3 kg config) is *inferred*
 from the interpolated F450 hover endurance × translational-lift cruise gain.
-See `docs/f450-reference.md` "Cruise (forward flight)" for the derivation.
+See `../../../docs/f450-reference.md` "Cruise (forward flight)" for the derivation.
 
 Usage:
   python tools/verification/test_distance.py            # headless asserts

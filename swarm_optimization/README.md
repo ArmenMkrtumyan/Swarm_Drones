@@ -20,7 +20,7 @@ It has two halves: an **optimization** part that decides how drones move or spli
 
 The simulator is calibrated to the actual hardware this project flies (**[Hawk's Work F450](https://www.hawks-work.com/pages/f450-drone)**) — a 1.3 kg quadcopter with a Pixhawk 2.4.8 flight controller, a 3S 4200 mAh LiPo, and a forward-facing STEEReoCAM Nano stereo camera.
 
-Full hardware breakdown lives in [`docs/f450-reference.md`](docs/f450-reference.md). Battery options in [`docs/battery-model.md`](docs/battery-model.md).
+Full hardware breakdown lives in [`docs/f450-reference.md`](../docs/f450-reference.md). Battery options in [`docs/battery-model.md`](../docs/battery-model.md).
 
 ---
 
@@ -30,8 +30,8 @@ Full hardware breakdown lives in [`docs/f450-reference.md`](docs/f450-reference.
 |---|---|
 | [`docs/setup.md`](docs/setup.md) | Install, GUI deps, demo run modes, CLI flags, map editor, outputs layout. |
 | [`docs/simulation-model.md`](docs/simulation-model.md) | World scale (5 m/cell), drone dynamics, coverage + visit-count metrics. |
-| [`docs/battery-model.md`](docs/battery-model.md) | 3S/4S battery options, mass-aware hover power, voltage cutoff, calibration. |
-| [`docs/f450-reference.md`](docs/f450-reference.md) | Hawk's Work F450 hardware spec, camera geometry. |
+| [`docs/battery-model.md`](../docs/battery-model.md) | 3S/4S battery options, mass-aware hover power, voltage cutoff, calibration. |
+| [`docs/f450-reference.md`](../docs/f450-reference.md) | Hawk's Work F450 hardware spec, camera geometry. |
 
 ---
 
@@ -80,7 +80,7 @@ Three algorithm families were implemented and benchmarked, converging on the mos
 All methods are evaluated against the same multi-criteria objective (reward for RL, cost function for the rest):
 
 - coverage percentage
-- total distance traveled / energy consumption (see [`docs/battery-model.md`](docs/battery-model.md))
+- total distance traveled / energy consumption (see [`docs/battery-model.md`](../docs/battery-model.md))
 - overlap between drones and wasted visits
 - time to complete coverage
 - scalability as the number of drones grows

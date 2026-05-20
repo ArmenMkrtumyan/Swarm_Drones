@@ -14,7 +14,7 @@ The 2D platform has just enough physics to expose the algorithmic question:
 |---|---|---|---|
 | `sensor_range` | 1.6 | 8.0 m | STEEReoCAM Nano stereo depth ceiling (datasheet) |
 | `sensor_hfov_rad` | — | 54° | STEEReoCAM Nano lens datasheet §5 |
-| `max_speed` | 1.8 | 9.0 m/s | translational-lift sweet-spot peak for our 1.3 kg build (`≈ 1.7 × v_induced`); see [`f450-reference.md` → Default `max_speed`](f450-reference.md) |
+| `max_speed` | 1.8 | 9.0 m/s | translational-lift sweet-spot peak for our 1.3 kg build (`≈ 1.7 × v_induced`); see [`f450-reference.md` → Default `max_speed`](../../docs/f450-reference.md) |
 | `max_accel` | 2.5 | 12.5 m/s² ≈ 1.3 g | below F450 hardware max — at 1.3 kg with TWR ≈ 2:1, physical max horizontal accel = √(T²−W²)/m ≈ 1.6–2.0 g; we use ~65–80 % of that for stability margin |
 | `max_yaw_rate` | — | 1.5 rad/s ≈ 86°/s | conservative scan rate (full 360° in ~4.2 s); PX4 / ArduPilot firmware defaults are ~200°/s — ours is well below for smooth coverage flight |
 | `max_yaw_accel` | — | 4.0 rad/s² | chosen for ~0.4 s yaw-settle time (`max_yaw_rate / max_yaw_accel = 1.5 / 4.0 ≈ 0.38 s`); engineering judgment, not a physics anchor |
@@ -40,7 +40,7 @@ Each call to `env.step(actions)` advances the world by `step_seconds`. The order
 
    d. **Integrate yaw.** `yaw_rate_new = yaw_rate_old + α_yaw · dt`, clipped to `±max_yaw_rate`; then `heading_new = heading_old + yaw_rate_new · dt`, wrapped into `[-π, π]`. Independent of translation (real quads yaw via differential motor torque, no body tilt).
 
-   e. **Drain battery.** `P = P_hover + k · |v_new|²`; subtract `P · dt` joules from `battery_j`, clamped at the cutoff. Uses the *post-collision* velocity, so a wall-blocked drone pays only `P_hover · dt`. Yaw doesn't enter the energy model — see [`battery-model.md`](battery-model.md).
+   e. **Drain battery.** `P = P_hover + k · |v_new|²`; subtract `P · dt` joules from `battery_j`, clamped at the cutoff. Uses the *post-collision* velocity, so a wall-blocked drone pays only `P_hover · dt`. Yaw doesn't enter the energy model — see [`battery-model.md`](../../docs/battery-model.md).
 
 3. **Update coverage.** After all drones moved, every free cell inside any drone's forward wedge is marked covered. Wedge: apex at `pos`, half-angle `sensor_hfov_rad/2`, radial range `sensor_range`. The drone's own cell is always included. Cumulative — once covered, always covered (no decay).
 
@@ -85,9 +85,9 @@ The 2D model leaves out everything that doesn't change algorithmic feasibility. 
 |---|---|---|
 | Attitude / tilt dynamics (a real quad must tilt to translate) | omitted — velocity is direct | ✓ PhysX articulation + per-motor thrust torques |
 | Aerodynamic drag | omitted | ✓ quadratic body drag, `K_DRAG = 0.028 N·s²/m²` |
-| Translational lift (5–9 m/s sweet spot) | **deliberately omitted** — keeps energy cost monotone-in-speed for the optimizer (see [battery-model.md → Why `v²` and not `v³`](battery-model.md#why-v²-and-not-v³)) | ✓ per-motor Gaussian thrust bonus, peak +15 % near 7 m/s (Bauersfeld & Scaramuzza 2021) |
+| Translational lift (5–9 m/s sweet spot) | **deliberately omitted** — keeps energy cost monotone-in-speed for the optimizer (see [battery-model.md → Why `v²` and not `v³`](../../docs/battery-model.md#why-v²-and-not-v³)) | ✓ per-motor Gaussian thrust bonus, peak +15 % near 7 m/s (Bauersfeld & Scaramuzza 2021) |
 | Ground effect | omitted — no altitude | ✓ per-rotor boost when AGL < rotor diameter (≈ 0.24 m) |
 | Actuator / motor lag | omitted | ✓ first-order lag, `MOTOR_TIME_CONSTANT_S = 0.05 s` |
 | IMU / GPS noise, EKF lag | omitted | ✓ via ArduPilot SITL's EKF + simulated sensors |
 | Wind disturbance | omitted | omitted |
-| Battery voltage sag (transient drop under load + non-linear LiPo discharge) | linear `V(E)` only, for cutoff threshold (see [battery-model.md](battery-model.md)) | **omitted** — `K_THRUST` constant for whole flight; ArduPilot's `FS_BATT_VOLTAGE` failsafe is the safety net |
+| Battery voltage sag (transient drop under load + non-linear LiPo discharge) | linear `V(E)` only, for cutoff threshold (see [battery-model.md](../../docs/battery-model.md)) | **omitted** — `K_THRUST` constant for whole flight; ArduPilot's `FS_BATT_VOLTAGE` failsafe is the safety net |
