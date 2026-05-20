@@ -1,4 +1,5 @@
 tools/.drone_env
+.capstone_env
 swarm_optimization/.optim_env
 # hardware reference PDFs (large binaries, values already baked into constants.py)
 swarm_optimization/docs/camera_specs/

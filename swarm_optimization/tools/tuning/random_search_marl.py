@@ -39,9 +39,9 @@ Outputs:
     outputs/images/random_search_marl_progress.png — best-so-far vs trial
 
 Usage:
-    python tools/random_search_marl.py                      # 20 trials, n=5
-    python tools/random_search_marl.py --trials 30 --drones 5
-    python tools/random_search_marl.py --steps-per-trial 50000
+    python tools/tuning/random_search_marl.py                      # 20 trials, n=5
+    python tools/tuning/random_search_marl.py --trials 30 --drones 5
+    python tools/tuning/random_search_marl.py --steps-per-trial 50000
 """
 
 from __future__ import annotations

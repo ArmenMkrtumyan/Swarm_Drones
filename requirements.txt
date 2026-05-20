@@ -1,0 +1,14 @@
+# Root capstone env — mission runner, bridge, control, metrics, tests.
+# Install: pip install -r requirements.txt
+#
+# RL training (torch, stable-baselines3, gymnasium, …) lives in a separate venv:
+#   see lab/rl/requirements.txt
+#
+# 2D swarm optimization env:
+#   see swarm_optimization/requirements.txt
+
+pymavlink>=2.4.40
+PyYAML>=6.0
+numpy>=1.26
+matplotlib>=3.8
+pytest>=7.4

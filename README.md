@@ -1,20 +1,25 @@
 # Swarm_Drones
 
-Bridge between Isaac Sim and ArduPilot SITL for the F450 capstone, plus the `lab/` package for stage tooling and disturbance harness.
+End-to-end capstone for autonomous drone swarms — from hardware-calibrated 2D algorithm benchmarking through full Isaac Sim + ArduPilot SITL simulation and RL-trained flight control. Built around the **Hawk's Work F450** quadcopter flying over a photorealistic AUA campus scene.
+
+Three workstreams in one repo:
+1. **2D swarm coverage** (`swarm_optimization/`) — 13 algorithms (classical / metaheuristic / MARL) benchmarked and BO-tuned on F450-calibrated physics.
+2. **Isaac Sim bridge** — real-time F450 simulation in a 500 m AUA world, connected to ArduPilot SITL over UDP.
+3. **RL flight control** (`lab/rl/`) — PPO tunes 12 ArduPilot PID gains in real-time via MAVLink PARAM_SET. v1 beats the hand-tuned default on 5 of 6 hover metrics under stacked wind, payload-drop, and IMU-noise disturbance: −39 % north RMS, −35 % roll RMS, −21 % pitch RMS, −33 % gyro RMS.
 
 ## Layout
 
-- `lab/` — main Python package. Holds the Isaac↔SITL bridge (`lab/bridge/Nvidia_SITL_connecter.py`), takeoff/autotune scripts (`lab/scripts/`), control + metrics, disturbance harness, mission DSL + runner, RL training stack, dynamics mirror, and tests.
-- `sitl/` — ArduCopter SITL param file (`params.parm`) loaded by the WSL launch command.
-- `scene/` — drone USDs and AUA world (`AUA_world_500m.usd` + `aua_bake/`). See **Heavy assets** below for the textures download.
-- `swarm_optimization/` — 2D swarm coverage testbed and benchmarking experiments (see [`swarm_optimization/README.md`](swarm_optimization/README.md)).
-- `docs/` — hardware reference docs shared across all sub-projects: [`f450-reference.md`](docs/f450-reference.md) (F450 specs, motor convention, flight-time data), [`battery-model.md`](docs/battery-model.md) (energy model, 3S/4S battery options).
+- `lab/` — core Python package: Isaac↔SITL bridge, mission DSL + runner, control + metrics, disturbance harness, RL training stack, and tests.
+- `sitl/` — ArduCopter SITL param file (`params.parm`).
+- `scene/` — F450 and AUA world USDs (`AUA_world_500m.usd`). See **Heavy assets** for the textures download.
+- `swarm_optimization/` — 2D coverage testbed (see [`swarm_optimization/README.md`](swarm_optimization/README.md)).
+- `docs/` — shared hardware docs: [`f450-reference.md`](docs/f450-reference.md), [`battery-model.md`](docs/battery-model.md).
 
 ## Heavy assets (not in git)
 
 Some assets are too large to track in git. They live in the shared Google Drive folder:
 
-**https://drive.google.com/drive/folders/1YoCJpJJ7Y0DpSdNDwIO5RWdEnv13tBaf?usp=drive_link**
+**https://drive.google.com/drive/folders/1JS7wnKm4kUWstQ4y34zV97cjmXLgX9uz?usp=drive_link**
 
 Required for a textured AUA world (otherwise terrain renders untextured but everything still loads and physics/RL/SITL work fine):
 
@@ -49,7 +54,7 @@ Several paths assume this layout: the WSL SITL launch command points at `/mnt/c/
    ```powershell
    python -m venv .capstone_env
    .capstone_env\Scripts\activate
-   pip install pymavlink pyserial pyyaml pytest matplotlib numpy
+   pip install -r requirements.txt
    ```
 5. **RL venv** (optional, separate) — see [`lab/rl/README.md`](lab/rl/README.md).
 
@@ -84,27 +89,9 @@ Hover benchmarks work analogously — see `python -m lab.control.benchmark_hover
 
 **Network ports:** UDP 9002 (Isaac↔SITL FDM), UDP 14551 (MAVLink to the mission runner and helper scripts). When training the RL adapter, add `--out=udp:<wsl-ip>:14552` to the SITL launch so the trainer (running in WSL on a separate venv) gets its own MAVLink stream — full details in [`lab/rl/README.md`](lab/rl/README.md).
 
-## Tests
-
-```powershell
-pytest lab/tests/
-```
-
-Tests use fixture flight/mission logs under `logs/`. Most tests skip automatically if the specific fixture log they need isn't present locally — pull what's missing from the Drive folder if you want them all to run.
-
 ## Report figures
 
-Three figures illustrating the project's three measurement axes. Full benchmarks (per-run plots, CSV/JSON tables) get written under `reports/` when you run the harnesses; what's shown here is curated.
-
-**Hover quality — baseline PID, calm vs worst-case disturbances.** Six Stage-1 gate metrics; each panel's dashed line is the pass threshold. Calm sits well below every gate; the worst-case profile pushes nearly every metric over.
-
-![Hover calm vs worst case](docs/figures/hover_calm_vs_worst.png)
-
-**Stage-2 mission accuracy — 20 m square.** Planned path (dashed) vs flown trajectory (blue) for one run of `square_20m.yaml`. Tolerance circles mark waypoint capture radii.
-
-![20 m square mission](docs/figures/mission_xy_square20.png)
-
-**RL pre-training — PPO vs TD3 vs SAC, 5 seeds each.** Mean ± std episode return on the `HoverPretrain-v0` GPU-mirror env over 100 k steps. PPO leads at every checkpoint.
+**RL pre-training — PPO vs TD3 vs SAC, 5 seeds each.** Mean ± std episode return on the `HoverPretrain-v0` GPU-mirror env over 100 k steps. PPO leads at every checkpoint (mean reward 574 vs 473 for TD3, 243 for SAC).
 
 ![RL learning curves](docs/figures/rl_learning_curves.png)
 
@@ -126,10 +113,9 @@ GitHub renders YouTube as a clickable thumbnail (no inline player). Click any of
 
 ## Upcoming
 
-- **RL hover benchmark execution.** Runbook is written ([`lab/rl/RL_BENCHMARK_RUNBOOK.md`](lab/rl/RL_BENCHMARK_RUNBOOK.md)); next step is the 20-flight comparison of the `compare_v1` PPO winner against the PID baseline on the real SITL + Isaac bridge.
-- **Phase-2 SITL fine-tune.** Resume the Phase-1 PPO checkpoint inside the real-time ArduPilot loop via `train_hover.py --resume`. Blocked behind the soft-reset / crash-recovery harness specified in [`lab/rl/PHASE2_RESET_DESIGN.md`](lab/rl/PHASE2_RESET_DESIGN.md).
-- **`compare_v2`.** Extend the action set from 12 to 16 gains by adding horizontal PSC (`PSC_POSXY_P`, `PSC_VELXY_*`) so the policy can affect XY drift, not just attitude+altitude. Prerequisite for Stage-4 mission RL.
-- **Stage 4 — RL on missions** and **Stage 5 — multi-drone swarm coordination.** `lab/swarm/` is the placeholder for the eventual coordination layer; Stage 4 reuses the mission DSL with a learned controller in place of PID.
+- **`compare_v2` — full 16-gain action set.** Extend from 12 to 16 gains by adding horizontal PSC (`PSC_POSXY_P`, `PSC_VELXY_*`) to close the east-RMS regression in v1 and enable full XY position control. Full mission flights are deferred to v2 — hover-only RL is the current scope; v2 is the prerequisite for in-flight mission tracking with a learned controller.
+- **3D mission RL.** Once v2 establishes a stable full-gain policy, move from hover tasks to full 3D waypoint missions — the policy replaces the PID controller end-to-end inside the existing mission DSL.
+- **Multi-drone swarm coordination.** `lab/swarm/` is the placeholder for the coordination layer, building on the 2D coverage results from `swarm_optimization/`.
 
 ## See also
 

@@ -79,7 +79,7 @@ Visit-count semantics are verified by [`tools/verification/test_overlap.py`](../
 
 ## Intentionally omitted in 2D (gap to Isaac / 3D bridge)
 
-The 2D model leaves out everything that doesn't change algorithmic feasibility. Each effect below is tagged with its status in the 3D Isaac bridge (`my_drone_simulation/Nvidia_SITL_connecter.py`) so the 2D-vs-3D contract is explicit:
+The 2D model leaves out everything that doesn't change algorithmic feasibility. Each effect below is tagged with its status in the 3D Isaac bridge (`lab/bridge/Nvidia_SITL_connecter.py`) so the 2D-vs-3D contract is explicit:
 
 | Effect | 2D | 3D bridge |
 |---|---|---|
