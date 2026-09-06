@@ -1,4 +1,4 @@
-# Swarm_Drones
+# RL_PID_tunning
 
 End-to-end capstone for autonomous drone swarms — from hardware-calibrated 2D algorithm benchmarking through full Isaac Sim + ArduPilot SITL simulation and RL-trained flight control. Built around the **Hawk's Work F450** quadcopter flying over a photorealistic AUA campus scene.
 
